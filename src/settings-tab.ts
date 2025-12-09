@@ -4,13 +4,146 @@
 
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import KnowledgeConnectPlugin from "./main";
+import { LiteLLMService } from "./services/litellm-service";
 
 export class KnowledgeConnectSettingTab extends PluginSettingTab {
 	plugin: KnowledgeConnectPlugin;
+	private modelSettingRef: Setting | null = null;
 
 	constructor(app: App, plugin: KnowledgeConnectPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	/**
+	 * 現在選択中のサービスのAPIキーを取得
+	 */
+	private getCurrentApiKey(): string {
+		if (this.plugin.settings.aiService === "openrouter") {
+			return this.plugin.settings.openrouterApiKey || this.plugin.settings.apiKey || "";
+		} else if (this.plugin.settings.aiService === "litellm") {
+			return this.plugin.settings.litellmApiKey || this.plugin.settings.apiKey || "";
+		}
+		return this.plugin.settings.apiKey || "";
+	}
+
+	/**
+	 * LiteLLMのモデルリストを取得してドロップダウンに設定
+	 */
+	private async loadLiteLLMModels(
+		setting: Setting,
+		dropdown: ReturnType<Setting["addDropdown"]> | null
+	): Promise<void> {
+		try {
+			// LiteLLMServiceのインスタンスを作成してモデルリストを取得
+			const litellmService = new LiteLLMService(this.plugin.settings);
+			
+			// select要素を取得（少し待機してから取得）
+			let selectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
+			if (!selectEl) {
+				// DOMが更新されるまで少し待機
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				selectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
+			}
+			if (!selectEl) {
+				console.error("[Settings] select要素が見つかりません。settingEl:", setting.settingEl);
+				return;
+			}
+			console.log("[Settings] select要素を取得しました");
+
+			if (!litellmService.isApiKeySet()) {
+				// select要素のオプションを更新（innerHTMLを使わずに安全に更新）
+				while (selectEl.firstChild) {
+					selectEl.removeChild(selectEl.firstChild);
+				}
+				const option = document.createElement("option");
+				option.value = "";
+				option.textContent = "APIキーが設定されていません";
+				selectEl.appendChild(option);
+				selectEl.value = "";
+				selectEl.disabled = true;
+				return;
+			}
+
+			const models = await litellmService.getModels();
+
+			// select要素がまだ存在するか再確認
+			let currentSelectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
+			if (!currentSelectEl) {
+				console.error("[Settings] モデル取得後にselect要素が見つかりません");
+				return;
+			}
+			selectEl = currentSelectEl;
+			console.log(`[Settings] モデルリスト取得完了: ${models.length}個`);
+
+			// select要素のオプションを更新（innerHTMLを使わずに安全に更新）
+			while (selectEl.firstChild) {
+				selectEl.removeChild(selectEl.firstChild);
+			}
+
+			if (models.length === 0) {
+				const option = document.createElement("option");
+				option.value = "";
+				option.textContent = "モデルが見つかりませんでした";
+				selectEl.appendChild(option);
+				selectEl.value = "";
+				selectEl.disabled = true;
+				return;
+			}
+
+			// モデルオプションを追加
+			models.forEach((model: string) => {
+				const option = document.createElement("option");
+				option.value = model;
+				option.textContent = model;
+				selectEl.appendChild(option);
+			});
+
+			// 現在の設定値がリストに含まれているか確認
+			const currentModel = this.plugin.settings.aiModel;
+			if (models.includes(currentModel)) {
+				selectEl.value = currentModel;
+			} else if (models.length > 0) {
+				// 最初のモデルを選択
+				selectEl.value = models[0];
+				this.plugin.settings.aiModel = models[0];
+				await this.plugin.saveSettings();
+			}
+
+			selectEl.disabled = false;
+
+			// onChangeイベントを再設定
+			selectEl.onchange = async () => {
+				this.plugin.settings.aiModel = selectEl.value;
+				await this.plugin.saveSettings();
+			};
+
+			console.log(`[Settings] モデルリストを更新しました: ${models.length}個のモデル`);
+		} catch (error) {
+			console.error("[Settings] モデルリストの取得に失敗しました:", error);
+			// select要素を再取得
+			let selectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
+			if (!selectEl) {
+				// DOMが更新されるまで少し待機
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				selectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
+			}
+			if (selectEl) {
+				// innerHTMLを使わずに安全に更新
+				while (selectEl.firstChild) {
+					selectEl.removeChild(selectEl.firstChild);
+				}
+				const option = document.createElement("option");
+				option.value = "";
+				option.textContent = error instanceof Error ? `エラー: ${error.message}` : "モデルリストの取得に失敗しました";
+				selectEl.appendChild(option);
+				selectEl.value = "";
+				selectEl.disabled = true;
+			} else {
+				console.error("[Settings] エラー処理時にselect要素が見つかりません");
+			}
+			new Notice("LiteLLMのモデルリストを取得できませんでした。エンドポイントURLとAPIキーを確認してください。");
+		}
 	}
 
 	display(): void {
@@ -25,13 +158,25 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 		// AIサービス選択
 		new Setting(containerEl)
 			.setName("AIサービス選択")
-			.setDesc("使用するAIサービスプロバイダーを選択してください。OpenRouterは複数のAIモデル（GPT-4、Claude、Geminiなど）に統一APIでアクセスできます。")
+			.setDesc(
+				this.plugin.settings.aiService === "openrouter"
+					? "使用するAIサービスプロバイダーを選択してください。OpenRouterは複数のAIモデル（GPT-4、Claude、Geminiなど）に統一APIでアクセスできます。"
+					: "使用するAIサービスプロバイダーを選択してください。LiteLLMは100以上のLLMを統一的なOpenAI互換インターフェースで利用できるオープンソースライブラリです。"
+			)
 			.addDropdown((dropdown) =>
 				dropdown
-					.addOption("openrouter", "OpenRouter（初期実装）")
-					.addOption("litellm", "LiteLLM（将来実装）")
+					.addOption("openrouter", "OpenRouter")
+					.addOption("litellm", "LiteLLM")
 					.setValue(this.plugin.settings.aiService)
 					.onChange(async (value) => {
+						// 現在のAPIキーを保存
+						const currentApiKey = this.getCurrentApiKey();
+						if (this.plugin.settings.aiService === "openrouter") {
+							this.plugin.settings.openrouterApiKey = currentApiKey;
+						} else if (this.plugin.settings.aiService === "litellm") {
+							this.plugin.settings.litellmApiKey = currentApiKey;
+						}
+
 						this.plugin.settings.aiService = value as "openrouter" | "litellm";
 						await this.plugin.saveSettings();
 						// サービス変更時に説明文を更新
@@ -45,24 +190,123 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 			.setDesc(
 				this.plugin.settings.aiService === "openrouter"
 					? "選択したAIサービスプロバイダーのAPIキーを設定します。OpenRouterの場合は https://openrouter.ai/ でAPIキーを取得できます。"
-					: "選択したAIサービスプロバイダーのAPIキーを設定します。LiteLLMの場合は、LiteLLMサーバーのAPIキーを設定してください。"
+					: "選択したAIサービスプロバイダーのAPIキーを設定します。LiteLLMの場合は、LiteLLMサーバーで設定したAPIキーを入力してください。"
 			)
 			.addText((text) => {
 				text.inputEl.type = "password";
+				const currentApiKey = this.getCurrentApiKey();
 				text
 					.setPlaceholder("APIキーを入力してください")
-					.setValue(this.plugin.settings.apiKey)
+					.setValue(currentApiKey)
 					.onChange(async (value) => {
+						// サービスごとのAPIキーを保存
+						if (this.plugin.settings.aiService === "openrouter") {
+							this.plugin.settings.openrouterApiKey = value;
+						} else if (this.plugin.settings.aiService === "litellm") {
+							this.plugin.settings.litellmApiKey = value;
+							// LiteLLM選択時はモデルリストだけを再読み込み
+							await this.plugin.saveSettings();
+							if (this.modelSettingRef) {
+								const selectEl = this.modelSettingRef.settingEl.querySelector("select") as HTMLSelectElement;
+								if (selectEl) {
+									// 一時的にローディング表示
+									selectEl.innerHTML = "";
+									const loadingOption = document.createElement("option");
+									loadingOption.value = "loading";
+									loadingOption.textContent = "モデルリストを読み込み中...";
+									selectEl.appendChild(loadingOption);
+									selectEl.value = "loading";
+									selectEl.disabled = true;
+									// モデルリストを再読み込み
+									this.loadLiteLLMModels(this.modelSettingRef, null);
+								}
+							}
+							return;
+						}
+						// 後方互換性のためapiKeyも更新
 						this.plugin.settings.apiKey = value;
 						await this.plugin.saveSettings();
 					});
 			});
 
+		// LiteLLMエンドポイントURL（LiteLLM選択時のみ表示）
+		if (this.plugin.settings.aiService === "litellm") {
+			new Setting(containerEl)
+				.setName("LiteLLMエンドポイントURL")
+				.setDesc("LiteLLMサーバーのベースURLを設定します。デフォルトは http://localhost:4000 です。")
+				.addText((text) =>
+					text
+						.setPlaceholder("http://localhost:4000")
+						.setValue(this.plugin.settings.litellmEndpointUrl || "http://localhost:4000")
+						.onChange(async (value) => {
+							// URLのバリデーション
+							try {
+								new URL(value || "http://localhost:4000");
+								this.plugin.settings.litellmEndpointUrl = value || "http://localhost:4000";
+								await this.plugin.saveSettings();
+								// モデルリストだけを再読み込み
+								if (this.modelSettingRef) {
+									const selectEl = this.modelSettingRef.settingEl.querySelector("select") as HTMLSelectElement;
+									if (selectEl) {
+										// 一時的にローディング表示
+										selectEl.innerHTML = "";
+										const loadingOption = document.createElement("option");
+										loadingOption.value = "loading";
+										loadingOption.textContent = "モデルリストを読み込み中...";
+										selectEl.appendChild(loadingOption);
+										selectEl.value = "loading";
+										selectEl.disabled = true;
+										// モデルリストを再読み込み
+										this.loadLiteLLMModels(this.modelSettingRef, null);
+									}
+								}
+							} catch {
+								new Notice("無効なURL形式です。");
+							}
+						})
+				);
+		}
+
 		// APIキーが未設定の場合の警告
-		if (!this.plugin.settings.apiKey || this.plugin.settings.apiKey.trim() === "") {
+		const currentApiKey = this.getCurrentApiKey();
+		if (!currentApiKey || currentApiKey.trim() === "") {
 			apiKeySetting.setDesc(
 				apiKeySetting.descEl.textContent + " ⚠️ APIキーが設定されていません。機能を使用するには必須です。"
 			);
+		}
+
+		// デフォルトAIモデル選択
+		this.modelSettingRef = new Setting(containerEl)
+			.setName("デフォルトAIモデル")
+			.setDesc("チャットで使用するデフォルトのAIモデルを選択してください。チャット画面でも切り替え可能です。");
+
+		if (this.plugin.settings.aiService === "openrouter") {
+			// OpenRouterのモデルリスト
+			this.modelSettingRef.addDropdown((dropdown) => {
+				dropdown
+					.addOption("google/gemini-2.5-flash", "Google Gemini 2.5 Flash")
+					.addOption("qwen/qwen3-235b-a22b-2507", "Qwen3 235B")
+					.addOption("openai/gpt-oss-120b", "OpenAI GPT-OSS 120B")
+					.addOption("openai/gpt-5-mini", "OpenAI GPT-5 Mini")
+					.addOption("openai/gpt-5.1", "OpenAI GPT-5.1")
+					.addOption("anthropic/claude-sonnet-4.5", "Anthropic Claude Sonnet 4.5")
+					.setValue(this.plugin.settings.aiModel)
+					.onChange(async (value) => {
+						this.plugin.settings.aiModel = value;
+						await this.plugin.saveSettings();
+					});
+			});
+		} else {
+			// LiteLLMのモデルリスト（動的取得）
+			const modelDropdown = this.modelSettingRef.addDropdown((dropdown) => {
+				dropdown
+					.addOption("loading", "モデルリストを読み込み中...")
+					.setValue("loading")
+					.setDisabled(true);
+			});
+
+			// モデルリストを取得
+			this.loadLiteLLMModels(this.modelSettingRef, modelDropdown);
 		}
 
 		// デフォルトの保存先フォルダ

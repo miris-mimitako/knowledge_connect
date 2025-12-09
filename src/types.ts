@@ -31,7 +31,9 @@ export interface NotificationSettings {
  */
 export interface KnowledgeConnectSettings {
 	// 必須設定
-	apiKey: string;
+	apiKey: string; // 後方互換性のため残す（現在選択中のサービスのAPIキー）
+	openrouterApiKey?: string; // OpenRouter APIキー
+	litellmApiKey?: string; // LiteLLM APIキー
 	aiService: AIService;
 	defaultSaveFolder: string;
 
@@ -45,5 +47,7 @@ export interface KnowledgeConnectSettings {
 	enableAutoSave: boolean;
 	timeoutSeconds: number;
 	maxTokens: number;
+	aiModel: string; // デフォルトAIモデル
+	litellmEndpointUrl?: string; // LiteLLMエンドポイントURL（オプション）
 }
 

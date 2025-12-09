@@ -6,3 +6,237 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+/* Knowledge Connect Plugin Styles */
+
+/* チャットViewのスタイル */
+.chat-input-container {
+	width: 99%;
+	max-width: 99%;
+}
+
+.chat-input {
+	width: 99%;
+	max-width: 99%;
+	box-sizing: border-box;
+}
+
+.chat-messages-container {
+	width: 99%;
+	max-width: 99%;
+	box-sizing: border-box;
+}
+
+.chat-message {
+	width: 99%;
+	max-width: 99%;
+	box-sizing: border-box;
+}
+
+/* モデル選択のスタイル */
+.chat-model-container {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.chat-model-label {
+	font-size: 0.9em;
+	font-weight: 500;
+}
+
+.chat-model-select {
+	flex: 1;
+	max-width: 300px;
+}
+
+.chat-model-name {
+	font-size: 0.85em;
+	color: var(--text-muted);
+	font-weight: normal;
+}
+
+/* アクションボタンのスタイル */
+.chat-action-buttons {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 8px;
+}
+
+.chat-action-buttons button {
+	flex: 1;
+	min-width: 120px;
+}
+
+/* Markdownレンダリングのスタイル */
+.chat-message-content {
+	width: 100%;
+}
+
+.chat-message-content p {
+	margin: 0.5em 0;
+}
+
+.chat-message-content h1,
+.chat-message-content h2,
+.chat-message-content h3,
+.chat-message-content h4,
+.chat-message-content h5,
+.chat-message-content h6 {
+	margin-top: 1em;
+	margin-bottom: 0.5em;
+}
+
+.chat-message-content ul,
+.chat-message-content ol {
+	margin: 0.5em 0;
+	padding-left: 1.5em;
+}
+
+.chat-message-content code {
+	background-color: var(--code-background);
+	padding: 0.1em 0.3em;
+	border-radius: 3px;
+	font-family: var(--font-monospace);
+}
+
+.chat-message-content pre {
+	background-color: var(--code-background);
+	padding: 1em;
+	border-radius: 4px;
+	overflow-x: auto;
+	margin: 0.5em 0;
+}
+
+.chat-message-content pre code {
+	background-color: transparent;
+	padding: 0;
+}
+
+.chat-message-content blockquote {
+	border-left: 3px solid var(--text-faint);
+	padding-left: 1em;
+	margin: 0.5em 0;
+	color: var(--text-muted);
+}
+
+.chat-message-content table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 0.5em 0;
+}
+
+.chat-message-content table th,
+.chat-message-content table td {
+	border: 1px solid var(--background-modifier-border);
+	padding: 0.5em;
+	text-align: left;
+}
+
+.chat-message-content table th {
+	background-color: var(--background-modifier-border);
+	font-weight: bold;
+}
+
+/* フォルダツリーモーダルのスタイル */
+.folder-tree-modal {
+	padding: 20px;
+}
+
+.folder-tree-search {
+	margin-bottom: 16px;
+}
+
+.folder-tree-search-input {
+	width: 100%;
+	padding: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.folder-tree-container {
+	max-height: 400px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	padding: 8px;
+	background-color: var(--background-primary);
+}
+
+.folder-tree-node {
+	margin: 2px 0;
+}
+
+.folder-tree-node-content {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.folder-tree-node-content:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.folder-tree-node-content.is-selected {
+	background-color: var(--interactive-hover);
+	color: var(--text-on-accent);
+}
+
+.folder-tree-expand-icon {
+	width: 16px;
+	text-align: center;
+	font-size: 0.8em;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.folder-tree-expand-icon:hover {
+	color: var(--text-normal);
+}
+
+.folder-tree-icon {
+	font-size: 1em;
+}
+
+.folder-tree-name {
+	flex: 1;
+}
+
+.folder-tree-children {
+	margin-left: 0;
+}
+
+.folder-tree-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+/* タイトル入力ダイアログのスタイル */
+.title-ai-button {
+	font-size: 1.2em;
+	min-width: 50px;
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+	color: white;
+	border: none;
+	transition: all 0.3s ease;
+}
+
+.title-ai-button:hover:not(:disabled) {
+	transform: scale(1.1);
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.title-ai-button:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}

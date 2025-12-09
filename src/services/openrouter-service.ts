@@ -25,7 +25,15 @@ export class OpenRouterService implements AIService {
 	}
 
 	isApiKeySet(): boolean {
-		return !!this.settings.apiKey && this.settings.apiKey.trim().length > 0;
+		const apiKey = this.settings.openrouterApiKey || this.settings.apiKey;
+		return !!apiKey && apiKey.trim().length > 0;
+	}
+
+	/**
+	 * 使用するAPIキーを取得
+	 */
+	private getApiKey(): string {
+		return this.settings.openrouterApiKey || this.settings.apiKey || "";
 	}
 
 	async chatCompletion(options: ChatCompletionOptions): Promise<ChatCompletionResponse> {
@@ -34,7 +42,7 @@ export class OpenRouterService implements AIService {
 		}
 
 		const requestBody = {
-			model: options.model || "openai/gpt-4o-mini", // デフォルトモデル
+			model: options.model || this.settings.aiModel || "google/gemini-2.5-flash", // 設定のデフォルトモデルを使用
 			messages: options.messages.map((msg) => ({
 				role: msg.role,
 				content: msg.content,
@@ -54,7 +62,7 @@ export class OpenRouterService implements AIService {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					Authorization: `Bearer ${this.settings.apiKey}`,
+					Authorization: `Bearer ${this.getApiKey()}`,
 					"HTTP-Referer": "https://obsidian.md", // OpenRouterの推奨ヘッダー
 					"X-Title": "Knowledge Connect Plugin", // OpenRouterの推奨ヘッダー
 				},

@@ -9,7 +9,9 @@ import { KnowledgeConnectSettings } from "./types";
  */
 export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	// 必須設定
-	apiKey: "",
+	apiKey: "", // 後方互換性のため残す
+	openrouterApiKey: "",
+	litellmApiKey: "",
 	aiService: "openrouter",
 	defaultSaveFolder: "",
 
@@ -27,6 +29,8 @@ export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	enableAutoSave: false,
 	timeoutSeconds: 60,
 	maxTokens: 2000,
+	aiModel: "google/gemini-2.5-flash", // デフォルトモデル
+	litellmEndpointUrl: "http://localhost:4000", // LiteLLMデフォルトエンドポイント
 };
 
 /**

@@ -5,6 +5,7 @@
 
 import { AIService } from "./ai-service-interface";
 import { OpenRouterService } from "./openrouter-service";
+import { LiteLLMService } from "./litellm-service";
 import { KnowledgeConnectSettings } from "../types";
 
 export class AIServiceFactory {
@@ -16,8 +17,7 @@ export class AIServiceFactory {
 			case "openrouter":
 				return new OpenRouterService(settings);
 			case "litellm":
-				// 将来実装
-				throw new Error("LiteLLMはまだ実装されていません。");
+				return new LiteLLMService(settings);
 			default:
 				throw new Error(`不明なAIサービス: ${settings.aiService}`);
 		}
