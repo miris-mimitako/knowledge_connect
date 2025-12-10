@@ -159,10 +159,19 @@ export class TitleInputDialog extends Modal {
 			});
 
 			let generatedTitle = response.content.trim();
+			
+			// 改行で分割して最初の行を取得（タイトル以外の説明が含まれる場合があるため）
+			const firstLine = generatedTitle.split("\n")[0].trim();
+			if (firstLine) {
+				generatedTitle = firstLine;
+			}
+			
 			// ファイル名として使用できない文字を削除
 			generatedTitle = generatedTitle
 				.replace(/[<>:"|?*\/\\]/g, "")
 				.replace(/\n/g, " ")
+				.replace(/^タイトル[:：]\s*/i, "") // 「タイトル:」などのプレフィックスを削除
+				.replace(/^「|」$/g, "") // 引用符を削除
 				.trim()
 				.slice(0, 50); // 最大50文字
 
@@ -170,6 +179,9 @@ export class TitleInputDialog extends Modal {
 				this.result.title = generatedTitle;
 				this.result.useAI = true;
 				this.titleInputEl.value = generatedTitle;
+			} else {
+				// タイトルが生成されなかった場合
+				console.warn("タイトルが生成されませんでした。レスポンス:", response.content);
 			}
 		} catch (error) {
 			console.error("タイトル生成エラー:", error);

@@ -120,7 +120,11 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 
 			console.log(`[Settings] モデルリストを更新しました: ${models.length}個のモデル`);
 		} catch (error) {
-			console.error("[Settings] モデルリストの取得に失敗しました:", error);
+			// エラーの詳細をログに記録
+			const errorMessage = error instanceof Error ? error.message : "Unknown error";
+			console.error("[Settings] モデルリストの取得に失敗しました:", errorMessage);
+			console.error("[Settings] エラー詳細:", error);
+			
 			// select要素を再取得
 			let selectEl = setting.settingEl.querySelector("select") as HTMLSelectElement;
 			if (!selectEl) {
@@ -135,14 +139,23 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 				}
 				const option = document.createElement("option");
 				option.value = "";
-				option.textContent = error instanceof Error ? `エラー: ${error.message}` : "モデルリストの取得に失敗しました";
+				// エラーメッセージを短縮（50文字以内）
+				const shortErrorMessage = errorMessage.length > 50 
+					? errorMessage.substring(0, 50) + "..." 
+					: errorMessage;
+				option.textContent = `エラー: ${shortErrorMessage}`;
 				selectEl.appendChild(option);
 				selectEl.value = "";
 				selectEl.disabled = true;
 			} else {
 				console.error("[Settings] エラー処理時にselect要素が見つかりません");
 			}
-			new Notice("LiteLLMのモデルリストを取得できませんでした。エンドポイントURLとAPIキーを確認してください。");
+			
+			// ユーザーに通知（詳細なエラーメッセージを表示）
+			const noticeMessage = errorMessage.includes("接続") || errorMessage.includes("Failed to fetch")
+				? `LiteLLMプロキシに接続できません。エンドポイントURL（${this.plugin.settings.litellmEndpointUrl || "http://localhost:4000"}）とAPIキーを確認してください。`
+				: `LiteLLMのモデルリストを取得できませんでした: ${errorMessage}`;
+			new Notice(noticeMessage, 8000);
 		}
 	}
 

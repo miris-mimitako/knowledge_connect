@@ -20,35 +20,41 @@ export default class KnowledgeConnectPlugin extends Plugin {
 	private aiService: AIService | null = null;
 
 	async onload() {
-		await this.loadSettings();
+		try {
+			await this.loadSettings();
 
-		// 設定タブを追加
-		this.addSettingTab(new KnowledgeConnectSettingTab(this.app, this));
+			// 設定タブを追加
+			this.addSettingTab(new KnowledgeConnectSettingTab(this.app, this));
 
-		// AIサービスを初期化
-		this.initializeAIService();
+			// AIサービスを初期化（エラーが発生してもプラグインは起動を続行）
+			this.initializeAIService();
 
-		// Viewを登録
-		this.registerView(
-			CHAT_VIEW_TYPE,
-			(leaf) => new ChatView(leaf, this)
-		);
-		this.registerView(
-			SUMMARY_VIEW_TYPE,
-			(leaf) => new SummaryView(leaf, this)
-		);
-		this.registerView(
-			SEARCH_VIEW_TYPE,
-			(leaf) => new SearchView(leaf, this)
-		);
+			// Viewを登録
+			this.registerView(
+				CHAT_VIEW_TYPE,
+				(leaf) => new ChatView(leaf, this)
+			);
+			this.registerView(
+				SUMMARY_VIEW_TYPE,
+				(leaf) => new SummaryView(leaf, this)
+			);
+			this.registerView(
+				SEARCH_VIEW_TYPE,
+				(leaf) => new SearchView(leaf, this)
+			);
 
-		// コマンドを登録
-		registerCommands(this);
+			// コマンドを登録
+			registerCommands(this);
 
-		// コンテキストメニューを登録
-		registerContextMenu(this);
+			// コンテキストメニューを登録
+			registerContextMenu(this);
 
-		console.log("Knowledge Connect Plugin loaded");
+			console.log("Knowledge Connect Plugin loaded");
+		} catch (error) {
+			// 起動時のエラーをログに記録（プラグインは可能な限り起動を続行）
+			console.error("[Knowledge Connect] プラグインの起動中にエラーが発生しました:", error);
+			// エラーが発生しても基本的な機能は利用可能にするため、ここではエラーを再スローしない
+		}
 	}
 
 	onunload() {
@@ -70,19 +76,23 @@ export default class KnowledgeConnectPlugin extends Plugin {
 
 	/**
 	 * AIサービスを初期化
+	 * エラーが発生してもプラグインは正常に動作する（AIサービスはnullのまま）
 	 */
 	private initializeAIService(): void {
 		try {
 			if (AIServiceFactory.isServiceAvailable(this.settings)) {
 				this.aiService = AIServiceFactory.createService(this.settings);
-				console.log(`AI Service initialized: ${this.aiService.getServiceName()}`);
+				console.log(`[Knowledge Connect] AI Service initialized: ${this.aiService.getServiceName()}`);
 			} else {
 				this.aiService = null;
-				console.log("AI Service not available: API key not set");
+				console.log("[Knowledge Connect] AI Service not available: API key not set");
 			}
 		} catch (error) {
+			// エラーが発生してもプラグインは起動を続行
 			this.aiService = null;
-			console.error("Failed to initialize AI service:", error);
+			const errorMessage = error instanceof Error ? error.message : "Unknown error";
+			console.error(`[Knowledge Connect] Failed to initialize AI service: ${errorMessage}`);
+			console.error("[Knowledge Connect] プラグインはAIサービスなしで動作します。設定画面で接続を確認してください。");
 		}
 	}
 

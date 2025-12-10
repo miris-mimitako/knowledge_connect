@@ -63,8 +63,18 @@ export class ChatView extends ItemView {
 		modelContainer.createEl("label", { text: "モデル: ", cls: "chat-model-label" });
 		this.modelSelectEl = modelContainer.createEl("select", { cls: "chat-model-select" });
 		
-		// モデルリストを動的に生成
-		await this.loadModelOptions();
+		// モデルリストを動的に生成（エラーが発生してもプラグインは正常に動作する）
+		try {
+			await this.loadModelOptions();
+		} catch (error) {
+			// onOpenでのエラーはログに記録するが、プラグインの起動は続行
+			console.error("[ChatView] onOpen中にエラーが発生しました:", error);
+			// エラー状態のオプションを設定
+			if (this.modelSelectEl) {
+				this.modelSelectEl.innerHTML = '<option value="">モデルリストの読み込みに失敗しました</option>';
+				this.modelSelectEl.disabled = true;
+			}
+		}
 
 		// アクションボタン
 		const actionButtons = header.createDiv("chat-action-buttons");
@@ -157,39 +167,73 @@ export class ChatView extends ItemView {
 				// LiteLLMのモデルリストを取得
 				const litellmService = new LiteLLMService(this.plugin.settings);
 				if (litellmService.isApiKeySet()) {
-					const modelIds = await litellmService.getModels();
-					models = modelIds.map((id) => ({ value: id, label: id }));
+					try {
+						const modelIds = await litellmService.getModels();
+						models = modelIds.map((id) => ({ value: id, label: id }));
+					} catch (error) {
+						// LiteLLM接続エラーをキャッチ
+						console.error("[ChatView] LiteLLMモデルリストの取得に失敗:", error);
+						const errorMessage = error instanceof Error 
+							? error.message 
+							: "LiteLLMプロキシに接続できません";
+						
+						// エラーメッセージを表示（通知設定を確認）
+						showError(
+							`LiteLLM接続エラー: ${errorMessage}`,
+							this.plugin.settings.notificationSettings
+						);
+						
+						// エラー状態のオプションを設定
+						models = [{ 
+							value: "", 
+							label: `接続エラー: ${errorMessage.length > 50 ? errorMessage.substring(0, 50) + "..." : errorMessage}` 
+						}];
+					}
 				} else {
 					models = [{ value: "", label: "APIキーが設定されていません" }];
 				}
 			}
 
 			// オプションを更新
-			this.modelSelectEl.innerHTML = "";
-			models.forEach((model) => {
-				const option = document.createElement("option");
-				option.value = model.value;
-				option.textContent = model.label;
-				this.modelSelectEl!.appendChild(option);
-			});
+			if (this.modelSelectEl) {
+				this.modelSelectEl.innerHTML = "";
+				models.forEach((model) => {
+					const option = document.createElement("option");
+					option.value = model.value;
+					option.textContent = model.label;
+					this.modelSelectEl!.appendChild(option);
+				});
 
-			// 現在のモデルを設定
-			if (models.length > 0 && models.some((m) => m.value === this.currentModel)) {
-				this.modelSelectEl.value = this.currentModel;
-			} else if (models.length > 0 && models[0].value) {
-				this.modelSelectEl.value = models[0].value;
-				this.currentModel = models[0].value;
+				// 現在のモデルを設定
+				if (models.length > 0 && models.some((m) => m.value === this.currentModel)) {
+					this.modelSelectEl.value = this.currentModel;
+				} else if (models.length > 0 && models[0].value) {
+					this.modelSelectEl.value = models[0].value;
+					this.currentModel = models[0].value;
+				}
+
+				// エラー時は無効化、成功時は有効化
+				this.modelSelectEl.disabled = models.length === 0 || !models[0].value;
+				this.modelSelectEl.onchange = (e) => {
+					const target = e.target as HTMLSelectElement;
+					this.currentModel = target.value;
+				};
 			}
-
-			this.modelSelectEl.disabled = false;
-			this.modelSelectEl.onchange = (e) => {
-				const target = e.target as HTMLSelectElement;
-				this.currentModel = target.value;
-			};
 		} catch (error) {
-			console.error("モデルリストの読み込みに失敗しました:", error);
-			this.modelSelectEl.innerHTML = '<option value="">エラー: モデルリストを取得できませんでした</option>';
-			this.modelSelectEl.disabled = true;
+			// 予期しないエラーをキャッチ
+			console.error("[ChatView] モデルリストの読み込みに失敗しました:", error);
+			if (this.modelSelectEl) {
+				const errorMessage = error instanceof Error 
+					? error.message 
+					: "予期しないエラーが発生しました";
+				this.modelSelectEl.innerHTML = `<option value="">エラー: ${errorMessage.length > 50 ? errorMessage.substring(0, 50) + "..." : errorMessage}</option>`;
+				this.modelSelectEl.disabled = true;
+			}
+			// エラー通知を表示
+			showError(
+				error instanceof Error ? error.message : "モデルリストの取得に失敗しました",
+				this.plugin.settings.notificationSettings
+			);
 		}
 	}
 
@@ -421,17 +465,30 @@ export class ChatView extends ItemView {
 			});
 
 			generatedTitle = titleResponse.content.trim();
+			
+			// 改行で分割して最初の行を取得（タイトル以外の説明が含まれる場合があるため）
+			const firstLine = generatedTitle.split("\n")[0].trim();
+			if (firstLine) {
+				generatedTitle = firstLine;
+			}
+			
 			// ファイル名として使用できない文字を削除
 			generatedTitle = generatedTitle
 				.replace(/[<>:"|?*\/\\]/g, "")
 				.replace(/\n/g, " ")
+				.replace(/^タイトル[:：]\s*/i, "") // 「タイトル:」などのプレフィックスを削除
+				.replace(/^「|」$/g, "") // 引用符を削除
 				.trim()
 				.slice(0, 50); // 最大50文字
 
 			if (!generatedTitle) {
+				console.warn("タイトルが生成されませんでした。レスポンス:", titleResponse.content);
 				generatedTitle = `チャット履歴-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
 			}
 		} catch (error) {
+			// エラーを表示
+			showError(error, this.plugin.settings.notificationSettings);
+			console.error("タイトル生成エラー:", error);
 			// エラー時はタイムスタンプベースのタイトルを使用
 			generatedTitle = `チャット履歴-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
 		}
@@ -514,8 +571,21 @@ export class ChatView extends ItemView {
 			try {
 				const litellmService = new LiteLLMService(this.plugin.settings);
 				if (litellmService.isApiKeySet()) {
-					const modelIds = await litellmService.getModels();
-					availableModels = modelIds.map((id) => ({ value: id, label: id }));
+					try {
+						const modelIds = await litellmService.getModels();
+						availableModels = modelIds.map((id) => ({ value: id, label: id }));
+					} catch (error) {
+						// LiteLLM接続エラーをキャッチ
+						console.error("[ChatView] LiteLLMモデルリストの取得に失敗:", error);
+						const errorMessage = error instanceof Error 
+							? error.message 
+							: "LiteLLMプロキシに接続できません";
+						showError(
+							`LiteLLM接続エラー: ${errorMessage}`,
+							this.plugin.settings.notificationSettings
+						);
+						return;
+					}
 				} else {
 					showError(
 						"APIキーが設定されていません。設定画面でAPIキーを設定してください。",
@@ -524,6 +594,8 @@ export class ChatView extends ItemView {
 					return;
 				}
 			} catch (error) {
+				// 予期しないエラーをキャッチ
+				console.error("[ChatView] モデルリスト取得処理でエラー:", error);
 				showError(
 					error instanceof Error ? error.message : "モデルリストの取得に失敗しました",
 					this.plugin.settings.notificationSettings
