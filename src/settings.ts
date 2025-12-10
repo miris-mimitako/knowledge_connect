@@ -31,6 +31,11 @@ export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	maxTokens: 2000,
 	aiModel: "google/gemini-2.5-flash", // デフォルトモデル
 	litellmEndpointUrl: "http://localhost:4000", // LiteLLMデフォルトエンドポイント
+	embeddingModel: "openai/text-embedding-ada-002", // デフォルトベクトル化モデル
+	excludedFolders: [], // ベクトル化対象から除外するフォルダのリスト（デフォルトは空、強制除外リストは自動適用）
+	failedVectorizationFiles: [], // ベクトル化に失敗したファイルのリスト
+	vectorizationConcurrency: 2, // ベクトル化キューの同時実行数
+	searchResultLimit: 10, // 検索結果の最大件数
 };
 
 /**

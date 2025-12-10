@@ -5,10 +5,14 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import KnowledgeConnectPlugin from "./main";
 import { LiteLLMService } from "./services/litellm-service";
+import { EmbeddingService, EMBEDDING_MODELS, type EmbeddingModel } from "./services/embedding-service";
+import { ModelChangeDialog } from "./utils/model-change-dialog";
+import { DirectorySelectorModal } from "./utils/directory-selector-modal";
 
 export class KnowledgeConnectSettingTab extends PluginSettingTab {
 	plugin: KnowledgeConnectPlugin;
 	private modelSettingRef: Setting | null = null;
+	private statusInterval: number | null = null;
 
 	constructor(app: App, plugin: KnowledgeConnectPlugin) {
 		super(app, plugin);
@@ -159,8 +163,14 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 		}
 	}
 
-	display(): void {
+	async display(): Promise<void> {
 		const { containerEl } = this;
+
+		// 既存のインターバルをクリア
+		if (this.statusInterval !== null) {
+			clearInterval(this.statusInterval);
+			this.statusInterval = null;
+		}
 
 		containerEl.empty();
 		containerEl.createEl("h2", { text: "Knowledge Connect 設定" });
@@ -544,6 +554,256 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 					});
 			})
 			.addExtraButton((button) => button.setIcon("hash").setTooltip("トークン"));
+
+		// ==================== 検索・ベクトル化設定 ====================
+		containerEl.createEl("h3", { text: "検索・ベクトル化設定" });
+
+		// ベクトル化対象ディレクトリの設定
+		new Setting(containerEl)
+			.setName("ベクトル化対象ディレクトリ")
+			.setDesc(
+				"ベクトル化から除外するフォルダを選択できます。初期設定は全域（すべてのフォルダ）が対象です。"
+			)
+			.addButton((button) => {
+				button.setButtonText("ディレクトリを選択").onClick(() => {
+					const modal = new DirectorySelectorModal(
+						this.app,
+						this.plugin.settings.excludedFolders || [],
+						async (excludedFolders: string[]) => {
+							this.plugin.settings.excludedFolders = excludedFolders;
+							await this.plugin.saveSettings();
+							new Notice("ベクトル化対象ディレクトリの設定を保存しました。");
+							this.display(); // 再表示
+						}
+					);
+					modal.open();
+				});
+			});
+
+		// ベクトル化モデル設定
+		const embeddingService = new EmbeddingService(this.plugin.settings);
+		const supportedModels = embeddingService.getSupportedModels();
+		const currentEmbeddingModel = this.plugin.settings.embeddingModel || "openai/text-embedding-ada-002";
+
+		new Setting(containerEl)
+			.setName("ベクトル化モデル")
+			.setDesc(
+				"検索機能で使用するベクトル化（Embedding）モデルを選択してください。モデルを変更すると、既存のインデックスが削除され、再計算が必要になります。"
+			)
+			.addDropdown((dropdown) => {
+				for (const model of supportedModels) {
+					const modelInfo = EMBEDDING_MODELS[model];
+					dropdown.addOption(model, `${modelInfo.name} (${modelInfo.dimensions}次元)`);
+				}
+				dropdown.setValue(currentEmbeddingModel);
+
+				dropdown.onChange(async (value) => {
+					const newModel = value as EmbeddingModel;
+					const oldModel = currentEmbeddingModel;
+
+					// モデルが変更された場合、警告ダイアログを表示
+					if (oldModel !== newModel && oldModel) {
+						const dialog = new ModelChangeDialog(
+							this.app,
+							oldModel,
+							newModel,
+							this.plugin.getSearchService(),
+							async (confirmedModel) => {
+								this.plugin.settings.embeddingModel = confirmedModel;
+								await this.plugin.saveSettings();
+								new Notice("ベクトル化モデルを変更しました。再計算が開始されます。");
+							}
+						);
+						dialog.open();
+					} else {
+						// 初回設定の場合は警告なし
+						this.plugin.settings.embeddingModel = newModel;
+						await this.plugin.saveSettings();
+					}
+				});
+			});
+
+		// 検索サービス状態
+		containerEl.createEl("h3", { text: "検索サービス状態" });
+
+		const statusSetting = new Setting(containerEl)
+			.setName("初期化状態")
+			.setDesc("検索サービスの初期化状態を表示します。");
+
+		const updateStatus = () => {
+			const searchService = this.plugin.getSearchService();
+			if (!searchService) {
+				statusSetting.descEl.setText("検索サービスが作成されていません。");
+				return;
+			}
+
+			const status = searchService.getInitializationStatus();
+			let statusText = "";
+			let statusColor = "";
+
+			if (status.error) {
+				statusText = `❌ エラー: ${status.error}`;
+				statusColor = "var(--text-error)";
+			} else if (status.isReady) {
+				statusText = "✅ 初期化完了（利用可能）";
+				statusColor = "var(--text-success)";
+			} else if (status.isInitialized && status.hasWorker && !status.workerReady) {
+				statusText = "⏳ Worker初期化中...";
+				statusColor = "var(--text-warning)";
+			} else if (status.isInitialized) {
+				statusText = "⏳ 初期化中...";
+				statusColor = "var(--text-warning)";
+			} else {
+				statusText = "⏳ 初期化待機中...";
+				statusColor = "var(--text-warning)";
+			}
+
+			// 詳細情報
+			const details = [];
+			details.push(`サービス初期化: ${status.isInitialized ? "✅" : "❌"}`);
+			details.push(`Worker存在: ${status.hasWorker ? "✅" : "❌"}`);
+			details.push(`Worker準備完了: ${status.workerReady ? "✅" : "❌"}`);
+			details.push(`利用可能: ${status.isReady ? "✅" : "❌"}`);
+
+			statusSetting.descEl.empty();
+			const statusEl = statusSetting.descEl.createEl("div", {
+				text: statusText,
+			});
+			statusEl.style.color = statusColor;
+			statusEl.style.fontWeight = "bold";
+			statusEl.style.marginBottom = "8px";
+
+			const detailsEl = statusSetting.descEl.createEl("div", {
+				text: details.join(" | "),
+			});
+			detailsEl.style.fontSize = "0.9em";
+			detailsEl.style.color = "var(--text-muted)";
+		};
+
+		// 初回表示
+		updateStatus();
+
+		// 定期的にステータスを更新（1秒ごと）
+		this.statusInterval = window.setInterval(updateStatus, 1000);
+
+		// インデックス管理
+		containerEl.createEl("h3", { text: "インデックス管理" });
+
+		// 初期インデックス構築ボタン（インデックスが存在しない場合のみ表示）
+		const { indexFileExists } = await import('./utils/index-persistence');
+		const hasIndex = await indexFileExists(this.plugin);
+		
+		if (!hasIndex) {
+			new Setting(containerEl)
+				.setName("初期インデックス構築")
+				.setDesc(
+					"初回起動時、すべてのMarkdownファイルをベクトル化して検索インデックスを構築します。"
+				)
+				.addButton((button) => {
+					button.setButtonText("インデックス構築を開始").setCta().onClick(async () => {
+						const searchService = this.plugin.getSearchService();
+						if (!searchService) {
+							new Notice("検索サービスが初期化されていません。プラグインを再読み込みしてください。");
+							return;
+						}
+
+						// 初期化が完了するまで待機
+						button.setButtonText("初期化待機中...").setDisabled(true);
+						const isReady = await searchService.waitUntilReady(30000);
+						if (!isReady) {
+							new Notice("検索サービスの初期化がタイムアウトしました。プラグインを再読み込みしてください。");
+							button.setButtonText("インデックス構築を開始").setDisabled(false);
+							return;
+						}
+						button.setButtonText("インデックス構築を開始").setDisabled(false);
+
+						try {
+							button.setButtonText("構築中...").setDisabled(true);
+							const count = await searchService.startInitialIndexing(this.plugin);
+							new Notice(`インデックス構築を開始しました。${count}件のファイルをキューに追加しました。`);
+							// 設定画面を再表示（ボタンを非表示にするため）
+							setTimeout(() => {
+								this.display();
+							}, 1000);
+						} catch (error) {
+							const errorMessage = error instanceof Error ? error.message : String(error);
+							new Notice(`インデックス構築の開始に失敗しました: ${errorMessage}`);
+							button.setButtonText("インデックス構築を開始").setDisabled(false);
+						}
+					});
+				});
+		}
+
+		// Rebuild Index ボタン
+		new Setting(containerEl)
+			.setName("インデックス全再構築")
+			.setDesc(
+				"検索インデックスを完全に再構築します。既存のインデックスが削除され、すべてのファイルが再ベクトル化されます。"
+			)
+			.addButton((button) => {
+				button.setButtonText("再構築を開始").setCta().onClick(async () => {
+					const searchService = this.plugin.getSearchService();
+					if (!searchService) {
+						new Notice("検索サービスが初期化されていません。プラグインを再読み込みしてください。");
+						return;
+					}
+
+					// 初期化が完了するまで待機
+					button.setButtonText("初期化待機中...").setDisabled(true);
+					const isReady = await searchService.waitUntilReady(30000);
+					if (!isReady) {
+						new Notice("検索サービスの初期化がタイムアウトしました。プラグインを再読み込みしてください。");
+						button.setButtonText("再構築を開始").setDisabled(false);
+						return;
+					}
+					button.setButtonText("再構築を開始").setDisabled(false);
+
+					try {
+						button.setButtonText("再構築中...").setDisabled(true);
+						
+						// インデックスを再構築
+						await searchService.rebuildIndex();
+						
+						// 全ファイルをキューに追加
+						const count = await searchService.startInitialIndexing(this.plugin);
+						
+						new Notice(`インデックスの再構築を開始しました。${count}件のファイルをキューに追加しました。`);
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : String(error);
+						new Notice(`インデックスの再構築に失敗しました: ${errorMessage}`);
+					} finally {
+						button.setButtonText("再構築を開始").setDisabled(false);
+					}
+				});
+			});
+
+		// 失敗ファイルリスト
+		const failedFiles = this.plugin.settings.failedVectorizationFiles || [];
+		if (failedFiles.length > 0) {
+			new Setting(containerEl)
+				.setName("ベクトル化失敗ファイル")
+				.setDesc(`ベクトル化に失敗したファイル: ${failedFiles.length}件`)
+				.addButton((button) => {
+					button.setButtonText("クリア").onClick(async () => {
+						this.plugin.settings.failedVectorizationFiles = [];
+						await this.plugin.saveSettings();
+						this.display(); // 再表示
+					});
+				});
+
+			// 失敗ファイルのリストを表示
+			const failedListEl = containerEl.createDiv("failed-files-list");
+			for (const filePath of failedFiles.slice(0, 10)) {
+				// 最大10件まで表示
+				const fileEl = failedListEl.createEl("p", { text: filePath });
+				fileEl.addClass("failed-file-item");
+			}
+			if (failedFiles.length > 10) {
+				failedListEl.createEl("p", {
+					text: `...他 ${failedFiles.length - 10}件`,
+				});
+			}
+		}
 	}
 }
 
