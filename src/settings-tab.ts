@@ -2,12 +2,11 @@
  * Knowledge Connect Plugin - Settings Tab
  */
 
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import KnowledgeConnectPlugin from "./main";
 import { LiteLLMService } from "./services/litellm-service";
-import { EmbeddingService, EMBEDDING_MODELS, type EmbeddingModel } from "./services/embedding-service";
-import { ModelChangeDialog } from "./utils/model-change-dialog";
-import { DirectorySelectorModal } from "./utils/directory-selector-modal";
+import { PromptTemplate } from "./types";
+
 
 export class KnowledgeConnectSettingTab extends PluginSettingTab {
 	plugin: KnowledgeConnectPlugin;
@@ -555,255 +554,283 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 			})
 			.addExtraButton((button) => button.setIcon("hash").setTooltip("トークン"));
 
-		// ==================== 検索・ベクトル化設定 ====================
-		containerEl.createEl("h3", { text: "検索・ベクトル化設定" });
+		// ==================== ページ要約機能設定 ====================
+		containerEl.createEl("h3", { text: "ページ要約機能設定" });
 
-		// ベクトル化対象ディレクトリの設定
-		new Setting(containerEl)
-			.setName("ベクトル化対象ディレクトリ")
-			.setDesc(
-				"ベクトル化から除外するフォルダを選択できます。初期設定は全域（すべてのフォルダ）が対象です。"
-			)
-			.addButton((button) => {
-				button.setButtonText("ディレクトリを選択").onClick(() => {
-					const modal = new DirectorySelectorModal(
-						this.app,
-						this.plugin.settings.excludedFolders || [],
-						async (excludedFolders: string[]) => {
-							this.plugin.settings.excludedFolders = excludedFolders;
+		// デフォルト要約モデル
+		if (this.plugin.settings.aiService === "openrouter") {
+			new Setting(containerEl)
+				.setName("デフォルト要約モデル")
+				.setDesc("ページ要約で使用するデフォルトのAIモデルを選択してください。")
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption("google/gemini-2.5-flash", "Google Gemini 2.5 Flash")
+						.addOption("qwen/qwen3-235b-a22b-2507", "Qwen3 235B")
+						.addOption("openai/gpt-oss-120b", "OpenAI GPT-OSS 120B")
+						.addOption("openai/gpt-5-mini", "OpenAI GPT-5 Mini")
+						.addOption("openai/gpt-5.1", "OpenAI GPT-5.1")
+						.addOption("anthropic/claude-sonnet-4.5", "Anthropic Claude Sonnet 4.5")
+						.setValue(this.plugin.settings.defaultSummaryModel || this.plugin.settings.aiModel)
+						.onChange(async (value) => {
+							this.plugin.settings.defaultSummaryModel = value;
 							await this.plugin.saveSettings();
-							new Notice("ベクトル化対象ディレクトリの設定を保存しました。");
-							this.display(); // 再表示
-						}
-					);
-					modal.open();
+						});
 				});
-			});
+		} else {
+			new Setting(containerEl)
+				.setName("デフォルト要約モデル")
+				.setDesc("ページ要約で使用するデフォルトのAIモデルを入力してください。空欄の場合はデフォルトAIモデルを使用します。")
+				.addText((text) => {
+					text
+						.setPlaceholder(this.plugin.settings.aiModel)
+						.setValue(this.plugin.settings.defaultSummaryModel || "")
+						.onChange(async (value) => {
+							this.plugin.settings.defaultSummaryModel = value || "";
+							await this.plugin.saveSettings();
+						});
+				});
+		}
 
-		// ベクトル化モデル設定
-		const embeddingService = new EmbeddingService(this.plugin.settings);
-		const supportedModels = embeddingService.getSupportedModels();
-		const currentEmbeddingModel = this.plugin.settings.embeddingModel || "openai/text-embedding-ada-002";
-
+		// 要約結果の保存先フォルダ
 		new Setting(containerEl)
-			.setName("ベクトル化モデル")
+			.setName("要約結果の保存先フォルダ")
 			.setDesc(
-				"検索機能で使用するベクトル化（Embedding）モデルを選択してください。モデルを変更すると、既存のインデックスが削除され、再計算が必要になります。"
+				"ページ要約結果の保存先フォルダを指定します。空欄の場合は元のページと同じフォルダに保存されます。"
 			)
-			.addDropdown((dropdown) => {
-				for (const model of supportedModels) {
-					const modelInfo = EMBEDDING_MODELS[model];
-					dropdown.addOption(model, `${modelInfo.name} (${modelInfo.dimensions}次元)`);
-				}
-				dropdown.setValue(currentEmbeddingModel);
-
-				dropdown.onChange(async (value) => {
-					const newModel = value as EmbeddingModel;
-					const oldModel = currentEmbeddingModel;
-
-					// モデルが変更された場合、警告ダイアログを表示
-					if (oldModel !== newModel && oldModel) {
-						const dialog = new ModelChangeDialog(
-							this.app,
-							oldModel,
-							newModel,
-							this.plugin.getSearchService(),
-							async (confirmedModel) => {
-								this.plugin.settings.embeddingModel = confirmedModel;
-								await this.plugin.saveSettings();
-								new Notice("ベクトル化モデルを変更しました。再計算が開始されます。");
-							}
-						);
-						dialog.open();
-					} else {
-						// 初回設定の場合は警告なし
-						this.plugin.settings.embeddingModel = newModel;
+			.addText((text) =>
+				text
+					.setPlaceholder("例: AI出力/要約")
+					.setValue(this.plugin.settings.summarySaveFolder || "")
+					.onChange(async (value) => {
+						// 無効な文字をチェック
+						const invalidChars = /[<>:"|?*]/;
+						if (invalidChars.test(value)) {
+							new Notice("フォルダパスに無効な文字が含まれています。");
+							return;
+						}
+						this.plugin.settings.summarySaveFolder = value;
 						await this.plugin.saveSettings();
-					}
+					})
+			);
+
+		// テンプレートプロンプト管理
+		containerEl.createEl("h4", { text: "テンプレートプロンプト管理" });
+		containerEl.createEl("p", {
+			text: "ページ要約で使用するテンプレートプロンプトを管理します。",
+			cls: "setting-item-description",
+		});
+
+		// テンプレートプロンプトのリストを表示
+		this.displayPromptTemplates(containerEl);
+
+		// 新しいテンプレートを追加するボタン
+		new Setting(containerEl).addButton((button) => {
+			button
+				.setButtonText("新しいテンプレートを追加")
+				.setCta()
+				.onClick(() => {
+					this.addNewPromptTemplate();
 				});
-			});
+		});
+	}
 
-		// 検索サービス状態
-		containerEl.createEl("h3", { text: "検索サービス状態" });
-
-		const statusSetting = new Setting(containerEl)
-			.setName("初期化状態")
-			.setDesc("検索サービスの初期化状態を表示します。");
-
-		const updateStatus = () => {
-			const searchService = this.plugin.getSearchService();
-			if (!searchService) {
-				statusSetting.descEl.setText("検索サービスが作成されていません。");
-				return;
-			}
-
-			const status = searchService.getInitializationStatus();
-			let statusText = "";
-			let statusColor = "";
-
-			if (status.error) {
-				statusText = `❌ エラー: ${status.error}`;
-				statusColor = "var(--text-error)";
-			} else if (status.isReady) {
-				statusText = "✅ 初期化完了（利用可能）";
-				statusColor = "var(--text-success)";
-			} else if (status.isInitialized && status.hasWorker && !status.workerReady) {
-				statusText = "⏳ Worker初期化中...";
-				statusColor = "var(--text-warning)";
-			} else if (status.isInitialized) {
-				statusText = "⏳ 初期化中...";
-				statusColor = "var(--text-warning)";
-			} else {
-				statusText = "⏳ 初期化待機中...";
-				statusColor = "var(--text-warning)";
-			}
-
-			// 詳細情報
-			const details = [];
-			details.push(`サービス初期化: ${status.isInitialized ? "✅" : "❌"}`);
-			details.push(`Worker存在: ${status.hasWorker ? "✅" : "❌"}`);
-			details.push(`Worker準備完了: ${status.workerReady ? "✅" : "❌"}`);
-			details.push(`利用可能: ${status.isReady ? "✅" : "❌"}`);
-
-			statusSetting.descEl.empty();
-			const statusEl = statusSetting.descEl.createEl("div", {
-				text: statusText,
-			});
-			statusEl.style.color = statusColor;
-			statusEl.style.fontWeight = "bold";
-			statusEl.style.marginBottom = "8px";
-
-			const detailsEl = statusSetting.descEl.createEl("div", {
-				text: details.join(" | "),
-			});
-			detailsEl.style.fontSize = "0.9em";
-			detailsEl.style.color = "var(--text-muted)";
-		};
-
-		// 初回表示
-		updateStatus();
-
-		// 定期的にステータスを更新（1秒ごと）
-		this.statusInterval = window.setInterval(updateStatus, 1000);
-
-		// インデックス管理
-		containerEl.createEl("h3", { text: "インデックス管理" });
-
-		// 初期インデックス構築ボタン（インデックスが存在しない場合のみ表示）
-		const { indexFileExists } = await import('./utils/index-persistence');
-		const hasIndex = await indexFileExists(this.plugin);
+	/**
+	 * テンプレートプロンプトのリストを表示
+	 */
+	private displayPromptTemplates(containerEl: HTMLElement): void {
+		const templates = this.plugin.settings.promptTemplates || [];
 		
-		if (!hasIndex) {
-			new Setting(containerEl)
-				.setName("初期インデックス構築")
-				.setDesc(
-					"初回起動時、すべてのMarkdownファイルをベクトル化して検索インデックスを構築します。"
-				)
-				.addButton((button) => {
-					button.setButtonText("インデックス構築を開始").setCta().onClick(async () => {
-						const searchService = this.plugin.getSearchService();
-						if (!searchService) {
-							new Notice("検索サービスが初期化されていません。プラグインを再読み込みしてください。");
-							return;
-						}
-
-						// 初期化が完了するまで待機
-						button.setButtonText("初期化待機中...").setDisabled(true);
-						const isReady = await searchService.waitUntilReady(30000);
-						if (!isReady) {
-							new Notice("検索サービスの初期化がタイムアウトしました。プラグインを再読み込みしてください。");
-							button.setButtonText("インデックス構築を開始").setDisabled(false);
-							return;
-						}
-						button.setButtonText("インデックス構築を開始").setDisabled(false);
-
-						try {
-							button.setButtonText("構築中...").setDisabled(true);
-							const count = await searchService.startInitialIndexing(this.plugin);
-							new Notice(`インデックス構築を開始しました。${count}件のファイルをキューに追加しました。`);
-							// 設定画面を再表示（ボタンを非表示にするため）
-							setTimeout(() => {
-								this.display();
-							}, 1000);
-						} catch (error) {
-							const errorMessage = error instanceof Error ? error.message : String(error);
-							new Notice(`インデックス構築の開始に失敗しました: ${errorMessage}`);
-							button.setButtonText("インデックス構築を開始").setDisabled(false);
-						}
-					});
-				});
+		// 既存のテンプレート表示をクリア
+		const existingSection = containerEl.querySelector(".prompt-templates-section");
+		if (existingSection) {
+			existingSection.remove();
 		}
 
-		// Rebuild Index ボタン
-		new Setting(containerEl)
-			.setName("インデックス全再構築")
-			.setDesc(
-				"検索インデックスを完全に再構築します。既存のインデックスが削除され、すべてのファイルが再ベクトル化されます。"
-			)
-			.addButton((button) => {
-				button.setButtonText("再構築を開始").setCta().onClick(async () => {
-					const searchService = this.plugin.getSearchService();
-					if (!searchService) {
-						new Notice("検索サービスが初期化されていません。プラグインを再読み込みしてください。");
-						return;
-					}
+		const templatesSection = containerEl.createDiv("prompt-templates-section");
 
-					// 初期化が完了するまで待機
-					button.setButtonText("初期化待機中...").setDisabled(true);
-					const isReady = await searchService.waitUntilReady(30000);
-					if (!isReady) {
-						new Notice("検索サービスの初期化がタイムアウトしました。プラグインを再読み込みしてください。");
-						button.setButtonText("再構築を開始").setDisabled(false);
-						return;
-					}
-					button.setButtonText("再構築を開始").setDisabled(false);
+		if (templates.length === 0) {
+			templatesSection.createEl("p", {
+				text: "テンプレートプロンプトがありません。",
+				cls: "mod-warning",
+			});
+			return;
+		}
 
-					try {
-						button.setButtonText("再構築中...").setDisabled(true);
-						
-						// インデックスを再構築
-						await searchService.rebuildIndex();
-						
-						// 全ファイルをキューに追加
-						const count = await searchService.startInitialIndexing(this.plugin);
-						
-						new Notice(`インデックスの再構築を開始しました。${count}件のファイルをキューに追加しました。`);
-					} catch (error) {
-						const errorMessage = error instanceof Error ? error.message : String(error);
-						new Notice(`インデックスの再構築に失敗しました: ${errorMessage}`);
-					} finally {
-						button.setButtonText("再構築を開始").setDisabled(false);
-					}
+		// 各テンプレートを表示
+		for (let i = 0; i < templates.length; i++) {
+			const template = templates[i];
+			const templateSetting = new Setting(templatesSection)
+				.setName(template.name)
+				.setDesc(template.content.substring(0, 100) + (template.content.length > 100 ? "..." : ""))
+				.addButton((button) => {
+					button
+						.setButtonText("編集")
+						.setIcon("pencil")
+						.onClick(() => {
+							this.editPromptTemplate(i);
+						});
+				})
+				.addButton((button) => {
+					button
+						.setButtonText("削除")
+						.setIcon("trash")
+						.setWarning()
+						.onClick(() => {
+							this.deletePromptTemplate(i);
+						});
 				});
+
+			// 最低1つは残す必要がある
+			if (templates.length <= 1) {
+				templateSetting.components[1].setDisabled(true);
+			}
+		}
+	}
+
+	/**
+	 * 新しいテンプレートプロンプトを追加
+	 */
+	private async addNewPromptTemplate(): Promise<void> {
+		const modal = new PromptTemplateEditModal(
+			this.app,
+			{
+				id: `template-${Date.now()}`,
+				name: "",
+				content: "",
+			},
+			async (template) => {
+				if (!this.plugin.settings.promptTemplates) {
+					this.plugin.settings.promptTemplates = [];
+				}
+				this.plugin.settings.promptTemplates.push(template);
+				await this.plugin.saveSettings();
+				this.display();
+			}
+		);
+		modal.open();
+	}
+
+	/**
+	 * テンプレートプロンプトを編集
+	 */
+	private async editPromptTemplate(index: number): Promise<void> {
+		const templates = this.plugin.settings.promptTemplates || [];
+		if (index < 0 || index >= templates.length) {
+			return;
+		}
+
+		const template = { ...templates[index] };
+		const modal = new PromptTemplateEditModal(
+			this.app,
+			template,
+			async (editedTemplate) => {
+				templates[index] = editedTemplate;
+				await this.plugin.saveSettings();
+				this.display();
+			}
+		);
+		modal.open();
+	}
+
+	/**
+	 * テンプレートプロンプトを削除
+	 */
+	private async deletePromptTemplate(index: number): Promise<void> {
+		const templates = this.plugin.settings.promptTemplates || [];
+		if (templates.length <= 1) {
+			new Notice("最低1つのテンプレートプロンプトが必要です。");
+			return;
+		}
+
+		if (index < 0 || index >= templates.length) {
+			return;
+		}
+
+		templates.splice(index, 1);
+		await this.plugin.saveSettings();
+		this.display();
+	}
+}
+
+/**
+ * テンプレートプロンプト編集モーダル
+ */
+class PromptTemplateEditModal extends Modal {
+	template: PromptTemplate;
+	onSubmit: (template: PromptTemplate) => void;
+
+	constructor(
+		app: App,
+		template: PromptTemplate,
+		onSubmit: (template: PromptTemplate) => void
+	) {
+		super(app);
+		this.template = { ...template };
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", {
+			text: this.template.id ? "テンプレートを編集" : "新しいテンプレートを追加",
+		});
+
+		// 名前入力
+		new Setting(contentEl)
+			.setName("テンプレート名")
+			.setDesc("テンプレートの名前を入力してください")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: 簡潔サマリー")
+					.setValue(this.template.name)
+					.onChange((value) => {
+						this.template.name = value;
+					});
 			});
 
-		// 失敗ファイルリスト
-		const failedFiles = this.plugin.settings.failedVectorizationFiles || [];
-		if (failedFiles.length > 0) {
-			new Setting(containerEl)
-				.setName("ベクトル化失敗ファイル")
-				.setDesc(`ベクトル化に失敗したファイル: ${failedFiles.length}件`)
-				.addButton((button) => {
-					button.setButtonText("クリア").onClick(async () => {
-						this.plugin.settings.failedVectorizationFiles = [];
-						await this.plugin.saveSettings();
-						this.display(); // 再表示
+		// 内容入力
+		const contentSetting = new Setting(contentEl)
+			.setName("プロンプト内容")
+			.setDesc("プロンプトの内容を入力してください")
+			.addTextArea((text) => {
+				text
+					.setPlaceholder("例: 以下の内容を要約してください...")
+					.setValue(this.template.content)
+					.onChange((value) => {
+						this.template.content = value;
 					});
-				});
+				text.inputEl.rows = 6;
+				text.inputEl.style.width = "100%";
+			});
 
-			// 失敗ファイルのリストを表示
-			const failedListEl = containerEl.createDiv("failed-files-list");
-			for (const filePath of failedFiles.slice(0, 10)) {
-				// 最大10件まで表示
-				const fileEl = failedListEl.createEl("p", { text: filePath });
-				fileEl.addClass("failed-file-item");
-			}
-			if (failedFiles.length > 10) {
-				failedListEl.createEl("p", {
-					text: `...他 ${failedFiles.length - 10}件`,
+		// ボタン
+		new Setting(contentEl).addButton((button) => {
+			button
+				.setButtonText("保存")
+				.setCta()
+				.onClick(() => {
+					if (!this.template.name || this.template.name.trim() === "") {
+						new Notice("テンプレート名を入力してください。");
+						return;
+					}
+					if (!this.template.content || this.template.content.trim() === "") {
+						new Notice("プロンプト内容を入力してください。");
+						return;
+					}
+					this.close();
+					this.onSubmit(this.template);
 				});
-			}
-		}
+		}).addButton((button) => {
+			button.setButtonText("キャンセル").onClick(() => {
+				this.close();
+			});
+		});
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 

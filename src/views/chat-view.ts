@@ -3,7 +3,7 @@
  * AIチャット機能のView実装
  */
 
-import { ItemView, MarkdownRenderer, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, MarkdownView, WorkspaceLeaf } from "obsidian";
 import KnowledgeConnectPlugin from "../main";
 import type { ChatMessage } from "../services/ai-service-interface";
 import { showError, showInfo, showSuccess } from "../utils/error-handler";
@@ -56,6 +56,11 @@ export class ChatView extends ItemView {
 
 		// ヘッダー
 		const header = container.createDiv("chat-header");
+		// ヘッダーの背景を確実に不透明にする
+		header.style.backgroundColor = "var(--background-primary)";
+		header.style.position = "sticky";
+		header.style.top = "0";
+		header.style.zIndex = "100";
 		header.createEl("h2", { text: "AI Chat" });
 		
 		// モデル選択
@@ -76,24 +81,42 @@ export class ChatView extends ItemView {
 			}
 		}
 
-		// アクションボタン
+		// アクションボタン（3列レイアウト）
 		const actionButtons = header.createDiv("chat-action-buttons");
 		
-		const createPageButton = actionButtons.createEl("button", {
+		// 1列目：アクティブページに追加するボタン
+		const column1 = actionButtons.createDiv("chat-action-column");
+		const appendToActivePageButton = column1.createEl("button", {
+			text: "アクティブページの下部に追加",
+			cls: "mod-cta",
+		});
+		appendToActivePageButton.onclick = () => this.appendToActivePage();
+
+		const summarizeAndAppendButton = column1.createEl("button", {
+			text: "アクティブページに要約して追加",
+			cls: "mod-cta",
+		});
+		summarizeAndAppendButton.onclick = () => this.summarizeAndAppendToActivePage();
+		
+		// 2列目：ページ作成ボタン（8pxマージン）
+		const column2 = actionButtons.createDiv("chat-action-column chat-action-column-2");
+		const createPageButton = column2.createEl("button", {
 			text: "ページを作成",
 			cls: "mod-cta",
 		});
 		createPageButton.onclick = () => this.createPageFromHistory();
 
-		const createSummaryPageButton = actionButtons.createEl("button", {
+		const createSummaryPageButton = column2.createEl("button", {
 			text: "要約してページを作成",
 			cls: "mod-cta",
 		});
 		createSummaryPageButton.onclick = () => this.createSummaryPage();
 
-		this.clearButton = actionButtons.createEl("button", {
+		// 3列目：履歴をクリアボタン（白色紫文字、大きく）
+		const column3 = actionButtons.createDiv("chat-action-column chat-action-column-3");
+		this.clearButton = column3.createEl("button", {
 			text: "履歴をクリア",
-			cls: "mod-cta",
+			cls: "chat-clear-button",
 		});
 		this.clearButton.onclick = () => this.clearHistory();
 
@@ -354,6 +377,9 @@ export class ChatView extends ItemView {
 			}
 
 			const contentEl = messageEl.createDiv("chat-message-content");
+			// 文字選択を有効化
+			contentEl.style.userSelect = "text";
+			(contentEl.style as any).webkitUserSelect = "text";
 			
 			// AIの応答はMarkdownとしてレンダリング、ユーザーのメッセージはテキストとして表示
 			if (message.role === "assistant") {
@@ -527,6 +553,335 @@ export class ChatView extends ItemView {
 						`ページを作成しました: ${file.path}`,
 						this.plugin.settings.notificationSettings
 					);
+				}
+			}
+		).open();
+	}
+
+	/**
+	 * アクティブページの下部にチャット履歴を追加
+	 */
+	private async appendToActivePage() {
+		if (this.messages.length === 0) {
+			showError(
+				"チャット履歴がありません。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		// 開いているMarkdownViewを取得（アクティブでなくても可）
+		let activeView: MarkdownView | null = null;
+		
+		// まずアクティブなMarkdownViewを確認
+		activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		
+		// アクティブなMarkdownViewが見つからない場合は、getLeavesOfTypeで探す
+		if (!activeView) {
+			try {
+				const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
+				if (markdownLeaves.length > 0) {
+					for (const leaf of markdownLeaves) {
+						if (leaf.view instanceof MarkdownView) {
+							activeView = leaf.view;
+							break;
+						}
+					}
+				}
+			} catch (e) {
+				console.error("[ChatView] Error getting leaves of type markdown:", e);
+			}
+		}
+		
+		// それでも見つからない場合は、iterateAllLeavesを使ってすべてのleafを確認
+		if (!activeView) {
+			this.app.workspace.iterateAllLeaves((leaf) => {
+				const view = leaf.view;
+				if (view instanceof MarkdownView) {
+					activeView = view;
+					return false; // 見つかったら停止
+				}
+				return true; // 続行
+			});
+		}
+		
+		if (!activeView) {
+			console.error("[ChatView] MarkdownView not found for append");
+			showError(
+				"開いているエディタが見つかりません。Markdownファイルを開いてください。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		const editor = activeView.editor;
+		if (!editor) {
+			console.error("[ChatView] Editor not found in MarkdownView for append");
+			showError(
+				"エディタが見つかりません。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+		
+		// チャット履歴をフォーマット
+		const separator = "\n\n---\n\n";
+		const chatContent = this.messages
+			.map((msg) => {
+				const role = msg.role === "user" ? "あなた" : "AI";
+				const modelInfo = msg.model
+					? ` (${this.getModelDisplayName(msg.model)})`
+					: "";
+				return `## ${role}${modelInfo}\n\n${msg.content}`;
+			})
+			.join("\n\n");
+
+		const formattedContent = `${separator}## チャット履歴\n\n${chatContent}${separator}`;
+
+		// 現在の内容の下部に追加
+		const currentContent = editor.getValue();
+		editor.setValue(currentContent + formattedContent);
+		
+		// カーソルを追加した内容の後に移動
+		const newLength = currentContent.length + formattedContent.length;
+		editor.setCursor(editor.offsetToPos(newLength));
+
+		showSuccess(
+			"チャット履歴をアクティブページの下部に追加しました。",
+			this.plugin.settings.notificationSettings
+		);
+	}
+
+	/**
+	 * アクティブページに要約して追加
+	 */
+	private async summarizeAndAppendToActivePage() {
+		if (this.messages.length === 0) {
+			showError(
+				"チャット履歴がありません。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		const aiService = this.plugin.getAIService();
+		if (!aiService) {
+			showError(
+				"APIキーが設定されていません。設定画面でAPIキーを設定してください。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		// 開いているMarkdownViewを取得（アクティブでなくても可）
+		let activeView: MarkdownView | null = null;
+		
+		// まずアクティブなMarkdownViewを確認
+		activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		
+		// アクティブなMarkdownViewが見つからない場合は、getLeavesOfTypeで探す
+		if (!activeView) {
+			try {
+				const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
+				if (markdownLeaves.length > 0) {
+					for (const leaf of markdownLeaves) {
+						if (leaf.view instanceof MarkdownView) {
+							activeView = leaf.view;
+							break;
+						}
+					}
+				}
+			} catch (e) {
+				console.error("[ChatView] Error getting leaves of type markdown:", e);
+			}
+		}
+		
+		// それでも見つからない場合は、iterateAllLeavesを使ってすべてのleafを確認
+		if (!activeView) {
+			this.app.workspace.iterateAllLeaves((leaf) => {
+				const view = leaf.view;
+				if (view instanceof MarkdownView) {
+					activeView = view;
+					return false; // 見つかったら停止
+				}
+				return true; // 続行
+			});
+		}
+		
+		if (!activeView) {
+			console.error("[ChatView] MarkdownView not found for summarize");
+			showError(
+				"開いているエディタが見つかりません。Markdownファイルを開いてください。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		const editor = activeView.editor;
+		if (!editor) {
+			console.error("[ChatView] Editor not found in MarkdownView for summarize");
+			showError(
+				"エディタが見つかりません。",
+				this.plugin.settings.notificationSettings
+			);
+			return;
+		}
+
+		// 利用可能なモデルリストを取得
+		let availableModels: Array<{ value: string; label: string }> = [];
+		
+		if (this.plugin.settings.aiService === "openrouter") {
+			// OpenRouterのモデルリスト
+			availableModels = [
+				{ value: "google/gemini-2.5-flash", label: "Google Gemini 2.5 Flash" },
+				{ value: "qwen/qwen3-235b-a22b-2507", label: "Qwen3 235B" },
+				{ value: "openai/gpt-oss-120b", label: "OpenAI GPT-OSS 120B" },
+				{ value: "openai/gpt-5-mini", label: "OpenAI GPT-5 Mini" },
+				{ value: "openai/gpt-5.1", label: "OpenAI GPT-5.1" },
+				{ value: "anthropic/claude-sonnet-4.5", label: "Anthropic Claude Sonnet 4.5" },
+			];
+		} else if (this.plugin.settings.aiService === "litellm") {
+			// LiteLLMのモデルリストを取得
+			try {
+				const litellmService = new LiteLLMService(this.plugin.settings);
+				if (litellmService.isApiKeySet()) {
+					try {
+						const modelIds = await litellmService.getModels();
+						availableModels = modelIds.map((id) => ({ value: id, label: id }));
+					} catch (error) {
+						console.error("[ChatView] LiteLLMモデルリストの取得に失敗:", error);
+						const errorMessage = error instanceof Error 
+							? error.message 
+							: "LiteLLMプロキシに接続できません";
+						showError(
+							`LiteLLM接続エラー: ${errorMessage}`,
+							this.plugin.settings.notificationSettings
+						);
+						return;
+					}
+				} else {
+					showError(
+						"APIキーが設定されていません。設定画面でAPIキーを設定してください。",
+						this.plugin.settings.notificationSettings
+					);
+					return;
+				}
+			} catch (error) {
+				console.error("[ChatView] モデルリスト取得処理でエラー:", error);
+				showError(
+					error instanceof Error ? error.message : "モデルリストの取得に失敗しました",
+					this.plugin.settings.notificationSettings
+				);
+				return;
+			}
+		}
+
+		// モデル選択ダイアログを表示
+		new ModelSelectDialog(
+			this.app,
+			this.currentModel,
+			availableModels,
+			async (modelResult: ModelSelectResult) => {
+				if (modelResult.cancelled) {
+					return;
+				}
+
+				const selectedModel = modelResult.model;
+				
+				// エディタを再取得（モーダルが閉じられた後でも有効であることを確認）
+				let currentView: MarkdownView | null = null;
+				
+				// まずアクティブなMarkdownViewを確認
+				currentView = this.app.workspace.getActiveViewOfType(MarkdownView);
+				
+				// アクティブなMarkdownViewが見つからない場合は、getLeavesOfTypeで探す
+				if (!currentView) {
+					try {
+						const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
+						if (markdownLeaves.length > 0) {
+							for (const leaf of markdownLeaves) {
+								if (leaf.view instanceof MarkdownView) {
+									currentView = leaf.view;
+									break;
+								}
+							}
+						}
+					} catch (e) {
+						console.error("[ChatView] Error getting leaves of type markdown after modal:", e);
+					}
+				}
+				
+				// それでも見つからない場合は、iterateAllLeavesを使ってすべてのleafを確認
+				if (!currentView) {
+					this.app.workspace.iterateAllLeaves((leaf) => {
+						const view = leaf.view;
+						if (view instanceof MarkdownView) {
+							currentView = view;
+							return false; // 見つかったら停止
+						}
+						return true; // 続行
+					});
+				}
+				
+				if (!currentView || !currentView.editor) {
+					console.error("[ChatView] MarkdownView not found after modal close");
+					showError(
+						"開いているエディタが見つかりません。Markdownファイルを開いてください。",
+						this.plugin.settings.notificationSettings
+					);
+					return;
+				}
+				const editor = currentView.editor;
+
+				// AIに要約を生成してもらう
+				showInfo("要約を生成中...", this.plugin.settings.notificationSettings);
+
+				try {
+					// チャット履歴をテキストに変換
+					const chatText = this.messages
+						.map((msg) => {
+							const role = msg.role === "user" ? "あなた" : "AI";
+							return `${role}: ${msg.content}`;
+						})
+						.join("\n\n");
+
+					// AIに要約を依頼
+					const response = await aiService.chatCompletion({
+						messages: [
+							{
+								role: "system",
+								content:
+									"あなたは優秀な要約アシスタントです。与えられたチャット履歴を分析して、構造化されたMarkdown形式の要約を作成してください。",
+							},
+							{
+								role: "user",
+								content: `以下のチャット履歴を要約してください：\n\n${chatText}`,
+							},
+						],
+						maxTokens: this.plugin.settings.maxTokens,
+						model: selectedModel,
+					});
+
+					const summaryContent = response.content.trim();
+
+					// 要約をフォーマット
+					const separator = "\n\n---\n\n";
+					const formattedSummary = `${separator}## チャット履歴の要約\n\n${summaryContent}${separator}`;
+
+					// 現在の内容の下部に追加
+					const currentContent = editor.getValue();
+					editor.setValue(currentContent + formattedSummary);
+					
+					// カーソルを追加した内容の後に移動
+					const newLength = currentContent.length + formattedSummary.length;
+					editor.setCursor(editor.offsetToPos(newLength));
+
+					showSuccess(
+						"要約をアクティブページの下部に追加しました。",
+						this.plugin.settings.notificationSettings
+					);
+				} catch (error) {
+					showError(error, this.plugin.settings.notificationSettings);
 				}
 			}
 		).open();

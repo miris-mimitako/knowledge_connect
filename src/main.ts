@@ -14,14 +14,7 @@ import { SummaryView, SUMMARY_VIEW_TYPE } from "./views/summary-view";
 import { SearchView, SEARCH_VIEW_TYPE } from "./views/search-view";
 import { registerCommands } from "./commands";
 import { registerContextMenu } from "./context-menu";
-import { SearchService } from "./services/search-service";
-import { VectorStatusManager } from "./services/vector-status-manager";
-import { FileWatcher, type FileChangeEvent } from "./services/file-watcher";
-import { Debouncer } from "./utils/debounce";
-import { VectorizationQueue } from "./services/vectorization-queue";
-import { VectorizationStatusBar } from "./services/vectorization-status-bar";
-import { CacheManager } from "./utils/cache-manager";
-import { isExcluded } from "./utils/exclusion-list";
+import { registerEditorSummarizeButton } from "./utils/editor-summarize-button";
 
 export default class KnowledgeConnectPlugin extends Plugin {
 	settings: KnowledgeConnectSettings;
@@ -64,18 +57,8 @@ export default class KnowledgeConnectPlugin extends Plugin {
 			// コンテキストメニューを登録
 			registerContextMenu(this);
 
-			// 検索サービスを初期化（非同期、エラーが発生してもプラグインは起動を続行）
-			// 起動をブロックしないように、少し遅延させて実行
-			setTimeout(() => {
-				this.initializeSearchService().catch((error) => {
-					console.error("[Knowledge Connect] Failed to initialize search service:", error);
-				});
-			}, 100);
-
-			// ファイル変更監視を開始（検索サービス初期化後に遅延実行）
-			setTimeout(() => {
-				this.initializeFileWatcher();
-			}, 500);
+			// エディタに要約ボタンを追加
+			registerEditorSummarizeButton(this);
 
 			console.log("Knowledge Connect Plugin loaded");
 		} catch (error) {

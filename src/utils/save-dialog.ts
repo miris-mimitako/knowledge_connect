@@ -311,6 +311,15 @@ class FolderTreeModal extends Modal {
 			this.renderTree();
 		};
 
+		// ダブルクリックで展開/折りたたみ（子ノードがある場合のみ）
+		if (node.children.length > 0) {
+			nodeContent.ondblclick = (e) => {
+				e.stopPropagation();
+				node.expanded = !node.expanded;
+				this.renderTree();
+			};
+		}
+
 		// 子ノードをレンダリング（展開されている場合）
 		if (node.expanded && node.children.length > 0) {
 			const childrenContainer = nodeEl.createDiv("folder-tree-children");

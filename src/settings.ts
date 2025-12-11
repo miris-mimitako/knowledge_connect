@@ -2,7 +2,7 @@
  * Knowledge Connect Plugin - Settings
  */
 
-import { KnowledgeConnectSettings } from "./types";
+import { KnowledgeConnectSettings, PromptTemplate } from "./types";
 
 /**
  * デフォルト設定値
@@ -31,11 +31,27 @@ export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	maxTokens: 2000,
 	aiModel: "google/gemini-2.5-flash", // デフォルトモデル
 	litellmEndpointUrl: "http://localhost:4000", // LiteLLMデフォルトエンドポイント
-	embeddingModel: "openai/text-embedding-ada-002", // デフォルトベクトル化モデル
-	excludedFolders: [], // ベクトル化対象から除外するフォルダのリスト（デフォルトは空、強制除外リストは自動適用）
-	failedVectorizationFiles: [], // ベクトル化に失敗したファイルのリスト
-	vectorizationConcurrency: 2, // ベクトル化キューの同時実行数
-	searchResultLimit: 10, // 検索結果の最大件数
+	
+	// ページ要約機能のデフォルト設定
+	promptTemplates: [
+		{
+			id: "brief",
+			name: "簡潔サマリー",
+			content: "以下の内容を5行程度の文章で簡潔にサマライズしてください。要点だけをまとめてください。",
+		},
+		{
+			id: "detailed",
+			name: "詳細サマリー",
+			content: "以下の内容を要約してください。詳細情報を残しつつも、要点だけが残された形にしてください。重要な情報は省略せずに含めてください。",
+		},
+		{
+			id: "email",
+			name: "メール用サマリー",
+			content: "以下の内容をメール送信用に適した形式で要約してください。簡潔で読みやすく、重要なポイントが明確に伝わるようにしてください。",
+		},
+	] as PromptTemplate[],
+	defaultSummaryModel: "", // 空の場合はaiModelを使用
+	summarySaveFolder: "", // 空の場合は元のページと同じフォルダ
 };
 
 /**

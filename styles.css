@@ -10,6 +10,17 @@ If your plugin does not need CSS, delete this file.
 /* Knowledge Connect Plugin Styles */
 
 /* チャットViewのスタイル */
+.chat-header {
+	position: sticky;
+	top: 0;
+	background-color: var(--background-primary) !important;
+	z-index: 100;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: 8px;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 .chat-input-container {
 	width: 99%;
 	max-width: 99%;
@@ -60,19 +71,56 @@ If your plugin does not need CSS, delete this file.
 /* アクションボタンのスタイル */
 .chat-action-buttons {
 	display: flex;
-	gap: 8px;
-	flex-wrap: wrap;
+	gap: 0;
 	margin-top: 8px;
+	align-items: flex-start;
 }
 
-.chat-action-buttons button {
+.chat-action-column {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	flex: 1;
+}
+
+.chat-action-column-2 {
+	margin-left: 8px;
+}
+
+.chat-action-column button {
 	flex: 1;
 	min-width: 120px;
+}
+
+.chat-action-column-3 {
+	justify-content: center;
+	margin-left: 8px;
+}
+
+.chat-clear-button {
+	background-color: white !important;
+	color: #9333ea !important;
+	font-size: 1.2em !important;
+	font-weight: 600 !important;
+	padding: 12px 24px !important;
+	border: 2px solid #9333ea !important;
+	border-radius: 6px !important;
+	cursor: pointer !important;
+	transition: all 0.2s ease !important;
+}
+
+.chat-clear-button:hover {
+	background-color: #f3e8ff !important;
+	transform: scale(1.05);
 }
 
 /* Markdownレンダリングのスタイル */
 .chat-message-content {
 	width: 100%;
+	user-select: text;
+	-webkit-user-select: text;
+	-moz-user-select: text;
+	-ms-user-select: text;
 }
 
 .chat-message-content p {
