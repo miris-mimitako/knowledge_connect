@@ -5,7 +5,8 @@
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"build": "node esbuild.config.mjs production",
+		"build:check": "tsc -noEmit -skipLibCheck",
 		"copy": "node copy-to-obsidian.mjs",
 		"build:copy": "npm run build && npm run copy",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
@@ -13,6 +14,10 @@
 	"keywords": [],
 	"author": "",
 	"license": "MIT",
+	"dependencies": {
+		"@orama/orama": "3.1.16",
+		"@orama/plugin-data-persistence": "3.1.16"
+	},
 	"devDependencies": {
 		"@types/node": "^16.11.6",
 		"@typescript-eslint/eslint-plugin": "5.29.0",

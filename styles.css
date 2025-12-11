@@ -288,3 +288,161 @@ If your plugin does not need CSS, delete this file.
 	opacity: 0.6;
 	cursor: not-allowed;
 }
+
+/* 検索Viewのスタイル */
+.search-header {
+	margin-bottom: 16px;
+}
+
+.search-mode-tabs {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.search-mode-tab {
+	padding: 6px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.search-mode-tab:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.search-mode-tab.is-active {
+	background-color: var(--interactive-active);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-active);
+}
+
+.search-input-container {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+
+.search-input {
+	width: 100%;
+	padding: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.search-limit-container {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.search-limit-label {
+	font-size: 0.9em;
+	color: var(--text-muted);
+}
+
+.search-limit-slider {
+	flex: 1;
+	max-width: 200px;
+}
+
+.search-results {
+	width: 100%;
+}
+
+.search-results-count {
+	font-size: 0.9em;
+	color: var(--text-muted);
+	margin-bottom: 12px;
+}
+
+/* 検索結果カードのスタイル */
+.search-result-card {
+	width: 100%;
+	padding: 12px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+	transition: background-color 0.2s ease;
+}
+
+.search-result-card:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.search-result-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	margin-bottom: 6px;
+	gap: 8px;
+}
+
+.search-result-title {
+	font-weight: bold;
+	font-size: 1.1em;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.search-result-path {
+	font-size: 0.8em;
+	color: var(--text-muted);
+	flex: 1;
+	text-align: center;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.search-result-date {
+	font-size: 0.8em;
+	color: var(--text-muted);
+}
+
+.search-result-body {
+	margin-top: 8px;
+}
+
+.search-result-preview {
+	font-size: 0.9em;
+	color: var(--text-normal);
+	line-height: 1.5;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	margin: 0;
+}
+
+/* キーワードハイライト */
+.search-highlight {
+	background-color: var(--text-highlight-bg, #ffeb3b);
+	color: var(--text-normal);
+	padding: 2px 0;
+}
+
+.search-load-more {
+	width: 100%;
+	margin-top: 16px;
+	padding: 8px;
+}
+
+/* ベクトル化済みアイコンのスタイル */
+.view-header .view-action.is-vectorized-icon {
+	color: var(--color-green, #4caf50);
+	opacity: 1;
+	cursor: default;
+}
+
+.view-header .view-action.is-vectorized-icon:hover {
+	opacity: 0.8;
+}

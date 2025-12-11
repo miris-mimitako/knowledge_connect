@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import { readFileSync, writeFileSync } from "fs";
 
 const banner =
 `/*
@@ -11,7 +12,30 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
-const context = await esbuild.context({
+// Workerファイルを先にビルドして、その内容を文字列として読み込むための準備
+// Workerファイルをビルド（テキストとして読み込むため、minifyはしない）
+const workerBuildForInline = {
+	banner: {
+		js: "",
+	},
+	entryPoints: ["src/workers/search-worker.ts"],
+	bundle: true,
+	external: [
+		"obsidian",
+		"electron",
+		...builtins],
+	format: "iife",
+	target: "es2018",
+	logLevel: "info",
+	sourcemap: false,
+	treeShaking: true,
+	outfile: "search-worker-inline.js",
+	minify: false, // インライン化するため、minifyはしない
+	platform: "browser",
+};
+
+// メインプラグインファイルのビルド設定
+const mainBuild = {
 	banner: {
 		js: banner,
 	},
@@ -39,11 +63,86 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
-});
+};
+
+// Workerファイルのビルド設定
+const workerBuild = {
+	banner: {
+		js: banner,
+	},
+	entryPoints: ["src/workers/search-worker.ts"],
+	bundle: true,
+	external: [
+		"obsidian",
+		"electron",
+		...builtins],
+	format: "iife", // IIFE形式（ObsidianのWorker環境で動作する）
+	target: "es2018",
+	logLevel: "info",
+	sourcemap: prod ? false : "inline",
+	treeShaking: true,
+	outfile: "search-worker.js",
+	minify: prod,
+	platform: "browser", // ブラウザ環境
+};
+
+// Workerコードをインライン化するためのヘルパー関数
+async function inlineWorkerCode() {
+	try {
+		console.log("Building worker code for inlining...");
+		// Workerファイルをビルド（一時ファイルとして）
+		await esbuild.build(workerBuildForInline);
+		
+		// ビルドされたWorkerコードを読み込む
+		const workerCode = readFileSync("search-worker-inline.js", "utf-8");
+		console.log(`Worker code loaded, length: ${workerCode.length}`);
+		
+		// Workerコードをエスケープして、JavaScript文字列として埋め込める形式に変換
+		const escapedWorkerCode = workerCode
+			.replace(/\\/g, "\\\\")  // バックスラッシュをエスケープ
+			.replace(/`/g, "\\`")      // バッククォートをエスケープ
+			.replace(/\${/g, "\\${")  // テンプレートリテラルの変数をエスケープ
+			.replace(/\r\n/g, "\\n")  // Windows改行をエスケープ
+			.replace(/\n/g, "\\n")    // Unix改行をエスケープ
+			.replace(/\r/g, "\\n");   // Mac改行をエスケープ
+		
+		// Workerコードをエクスポートするファイルを作成
+		const workerCodeModule = `// This file is auto-generated. Do not edit manually.
+// Worker code is inlined at build time to avoid path resolution issues in Obsidian.
+
+export const WORKER_CODE = \`${escapedWorkerCode}\`;
+`;
+		
+		writeFileSync("src/workers/worker-code.ts", workerCodeModule);
+		console.log("Worker code inlined successfully");
+	} catch (error) {
+		console.error("Failed to inline worker code:", error);
+		throw error;
+	}
+}
 
 if (prod) {
-	await context.rebuild();
+	// 本番ビルド: Workerコードをインライン化してからメインファイルをビルド
+	await inlineWorkerCode();
+	
+	const mainContext = await esbuild.context(mainBuild);
+	const workerContext = await esbuild.context(workerBuild);
+	
+	await Promise.all([
+		mainContext.rebuild(),
+		workerContext.rebuild()
+	]);
+	
 	process.exit(0);
 } else {
-	await context.watch();
+	// 開発モード: Workerコードをインライン化してからメインファイルをビルド
+	await inlineWorkerCode();
+	
+	const mainContext = await esbuild.context(mainBuild);
+	const workerContext = await esbuild.context(workerBuild);
+	
+	await Promise.all([
+		mainContext.watch(),
+		workerContext.watch()
+	]);
 }

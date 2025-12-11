@@ -18,5 +18,9 @@ main.js
 # obsidian
 data.json
 
+# Generated worker code
+src/workers/worker-code.ts
+search-worker-inline.js
+
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store

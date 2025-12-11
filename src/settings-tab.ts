@@ -7,9 +7,11 @@ import KnowledgeConnectPlugin from "./main";
 import { LiteLLMService } from "./services/litellm-service";
 import { PromptTemplate } from "./types";
 
+
 export class KnowledgeConnectSettingTab extends PluginSettingTab {
 	plugin: KnowledgeConnectPlugin;
 	private modelSettingRef: Setting | null = null;
+	private statusInterval: number | null = null;
 
 	constructor(app: App, plugin: KnowledgeConnectPlugin) {
 		super(app, plugin);
@@ -160,8 +162,14 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 		}
 	}
 
-	display(): void {
+	async display(): Promise<void> {
 		const { containerEl } = this;
+
+		// 既存のインターバルをクリア
+		if (this.statusInterval !== null) {
+			clearInterval(this.statusInterval);
+			this.statusInterval = null;
+		}
 
 		containerEl.empty();
 		containerEl.createEl("h2", { text: "Knowledge Connect 設定" });
