@@ -2,9 +2,10 @@
  * Knowledge Connect Plugin - Settings Tab
  */
 
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import KnowledgeConnectPlugin from "./main";
 import { LiteLLMService } from "./services/litellm-service";
+import { PromptTemplate } from "./types";
 
 export class KnowledgeConnectSettingTab extends PluginSettingTab {
 	plugin: KnowledgeConnectPlugin;
@@ -544,6 +545,284 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 					});
 			})
 			.addExtraButton((button) => button.setIcon("hash").setTooltip("トークン"));
+
+		// ==================== ページ要約機能設定 ====================
+		containerEl.createEl("h3", { text: "ページ要約機能設定" });
+
+		// デフォルト要約モデル
+		if (this.plugin.settings.aiService === "openrouter") {
+			new Setting(containerEl)
+				.setName("デフォルト要約モデル")
+				.setDesc("ページ要約で使用するデフォルトのAIモデルを選択してください。")
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption("google/gemini-2.5-flash", "Google Gemini 2.5 Flash")
+						.addOption("qwen/qwen3-235b-a22b-2507", "Qwen3 235B")
+						.addOption("openai/gpt-oss-120b", "OpenAI GPT-OSS 120B")
+						.addOption("openai/gpt-5-mini", "OpenAI GPT-5 Mini")
+						.addOption("openai/gpt-5.1", "OpenAI GPT-5.1")
+						.addOption("anthropic/claude-sonnet-4.5", "Anthropic Claude Sonnet 4.5")
+						.setValue(this.plugin.settings.defaultSummaryModel || this.plugin.settings.aiModel)
+						.onChange(async (value) => {
+							this.plugin.settings.defaultSummaryModel = value;
+							await this.plugin.saveSettings();
+						});
+				});
+		} else {
+			new Setting(containerEl)
+				.setName("デフォルト要約モデル")
+				.setDesc("ページ要約で使用するデフォルトのAIモデルを入力してください。空欄の場合はデフォルトAIモデルを使用します。")
+				.addText((text) => {
+					text
+						.setPlaceholder(this.plugin.settings.aiModel)
+						.setValue(this.plugin.settings.defaultSummaryModel || "")
+						.onChange(async (value) => {
+							this.plugin.settings.defaultSummaryModel = value || "";
+							await this.plugin.saveSettings();
+						});
+				});
+		}
+
+		// 要約結果の保存先フォルダ
+		new Setting(containerEl)
+			.setName("要約結果の保存先フォルダ")
+			.setDesc(
+				"ページ要約結果の保存先フォルダを指定します。空欄の場合は元のページと同じフォルダに保存されます。"
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("例: AI出力/要約")
+					.setValue(this.plugin.settings.summarySaveFolder || "")
+					.onChange(async (value) => {
+						// 無効な文字をチェック
+						const invalidChars = /[<>:"|?*]/;
+						if (invalidChars.test(value)) {
+							new Notice("フォルダパスに無効な文字が含まれています。");
+							return;
+						}
+						this.plugin.settings.summarySaveFolder = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		// テンプレートプロンプト管理
+		containerEl.createEl("h4", { text: "テンプレートプロンプト管理" });
+		containerEl.createEl("p", {
+			text: "ページ要約で使用するテンプレートプロンプトを管理します。",
+			cls: "setting-item-description",
+		});
+
+		// テンプレートプロンプトのリストを表示
+		this.displayPromptTemplates(containerEl);
+
+		// 新しいテンプレートを追加するボタン
+		new Setting(containerEl).addButton((button) => {
+			button
+				.setButtonText("新しいテンプレートを追加")
+				.setCta()
+				.onClick(() => {
+					this.addNewPromptTemplate();
+				});
+		});
+	}
+
+	/**
+	 * テンプレートプロンプトのリストを表示
+	 */
+	private displayPromptTemplates(containerEl: HTMLElement): void {
+		const templates = this.plugin.settings.promptTemplates || [];
+		
+		// 既存のテンプレート表示をクリア
+		const existingSection = containerEl.querySelector(".prompt-templates-section");
+		if (existingSection) {
+			existingSection.remove();
+		}
+
+		const templatesSection = containerEl.createDiv("prompt-templates-section");
+
+		if (templates.length === 0) {
+			templatesSection.createEl("p", {
+				text: "テンプレートプロンプトがありません。",
+				cls: "mod-warning",
+			});
+			return;
+		}
+
+		// 各テンプレートを表示
+		for (let i = 0; i < templates.length; i++) {
+			const template = templates[i];
+			const templateSetting = new Setting(templatesSection)
+				.setName(template.name)
+				.setDesc(template.content.substring(0, 100) + (template.content.length > 100 ? "..." : ""))
+				.addButton((button) => {
+					button
+						.setButtonText("編集")
+						.setIcon("pencil")
+						.onClick(() => {
+							this.editPromptTemplate(i);
+						});
+				})
+				.addButton((button) => {
+					button
+						.setButtonText("削除")
+						.setIcon("trash")
+						.setWarning()
+						.onClick(() => {
+							this.deletePromptTemplate(i);
+						});
+				});
+
+			// 最低1つは残す必要がある
+			if (templates.length <= 1) {
+				templateSetting.components[1].setDisabled(true);
+			}
+		}
+	}
+
+	/**
+	 * 新しいテンプレートプロンプトを追加
+	 */
+	private async addNewPromptTemplate(): Promise<void> {
+		const modal = new PromptTemplateEditModal(
+			this.app,
+			{
+				id: `template-${Date.now()}`,
+				name: "",
+				content: "",
+			},
+			async (template) => {
+				if (!this.plugin.settings.promptTemplates) {
+					this.plugin.settings.promptTemplates = [];
+				}
+				this.plugin.settings.promptTemplates.push(template);
+				await this.plugin.saveSettings();
+				this.display();
+			}
+		);
+		modal.open();
+	}
+
+	/**
+	 * テンプレートプロンプトを編集
+	 */
+	private async editPromptTemplate(index: number): Promise<void> {
+		const templates = this.plugin.settings.promptTemplates || [];
+		if (index < 0 || index >= templates.length) {
+			return;
+		}
+
+		const template = { ...templates[index] };
+		const modal = new PromptTemplateEditModal(
+			this.app,
+			template,
+			async (editedTemplate) => {
+				templates[index] = editedTemplate;
+				await this.plugin.saveSettings();
+				this.display();
+			}
+		);
+		modal.open();
+	}
+
+	/**
+	 * テンプレートプロンプトを削除
+	 */
+	private async deletePromptTemplate(index: number): Promise<void> {
+		const templates = this.plugin.settings.promptTemplates || [];
+		if (templates.length <= 1) {
+			new Notice("最低1つのテンプレートプロンプトが必要です。");
+			return;
+		}
+
+		if (index < 0 || index >= templates.length) {
+			return;
+		}
+
+		templates.splice(index, 1);
+		await this.plugin.saveSettings();
+		this.display();
+	}
+}
+
+/**
+ * テンプレートプロンプト編集モーダル
+ */
+class PromptTemplateEditModal extends Modal {
+	template: PromptTemplate;
+	onSubmit: (template: PromptTemplate) => void;
+
+	constructor(
+		app: App,
+		template: PromptTemplate,
+		onSubmit: (template: PromptTemplate) => void
+	) {
+		super(app);
+		this.template = { ...template };
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", {
+			text: this.template.id ? "テンプレートを編集" : "新しいテンプレートを追加",
+		});
+
+		// 名前入力
+		new Setting(contentEl)
+			.setName("テンプレート名")
+			.setDesc("テンプレートの名前を入力してください")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: 簡潔サマリー")
+					.setValue(this.template.name)
+					.onChange((value) => {
+						this.template.name = value;
+					});
+			});
+
+		// 内容入力
+		const contentSetting = new Setting(contentEl)
+			.setName("プロンプト内容")
+			.setDesc("プロンプトの内容を入力してください")
+			.addTextArea((text) => {
+				text
+					.setPlaceholder("例: 以下の内容を要約してください...")
+					.setValue(this.template.content)
+					.onChange((value) => {
+						this.template.content = value;
+					});
+				text.inputEl.rows = 6;
+				text.inputEl.style.width = "100%";
+			});
+
+		// ボタン
+		new Setting(contentEl).addButton((button) => {
+			button
+				.setButtonText("保存")
+				.setCta()
+				.onClick(() => {
+					if (!this.template.name || this.template.name.trim() === "") {
+						new Notice("テンプレート名を入力してください。");
+						return;
+					}
+					if (!this.template.content || this.template.content.trim() === "") {
+						new Notice("プロンプト内容を入力してください。");
+						return;
+					}
+					this.close();
+					this.onSubmit(this.template);
+				});
+		}).addButton((button) => {
+			button.setButtonText("キャンセル").onClick(() => {
+				this.close();
+			});
+		});
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 

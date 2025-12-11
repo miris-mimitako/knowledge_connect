@@ -14,6 +14,7 @@ import { SummaryView, SUMMARY_VIEW_TYPE } from "./views/summary-view";
 import { SearchView, SEARCH_VIEW_TYPE } from "./views/search-view";
 import { registerCommands } from "./commands";
 import { registerContextMenu } from "./context-menu";
+import { registerEditorSummarizeButton } from "./utils/editor-summarize-button";
 
 export default class KnowledgeConnectPlugin extends Plugin {
 	settings: KnowledgeConnectSettings;
@@ -48,6 +49,9 @@ export default class KnowledgeConnectPlugin extends Plugin {
 
 			// コンテキストメニューを登録
 			registerContextMenu(this);
+
+			// エディタに要約ボタンを追加
+			registerEditorSummarizeButton(this);
 
 			console.log("Knowledge Connect Plugin loaded");
 		} catch (error) {

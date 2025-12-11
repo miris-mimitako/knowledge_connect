@@ -27,6 +27,15 @@ export interface NotificationSettings {
 }
 
 /**
+ * テンプレートプロンプト
+ */
+export interface PromptTemplate {
+	id: string;
+	name: string;
+	content: string;
+}
+
+/**
  * プラグインの設定インターフェース
  */
 export interface KnowledgeConnectSettings {
@@ -49,5 +58,10 @@ export interface KnowledgeConnectSettings {
 	maxTokens: number;
 	aiModel: string; // デフォルトAIモデル
 	litellmEndpointUrl?: string; // LiteLLMエンドポイントURL（オプション）
+	
+	// ページ要約機能の設定
+	promptTemplates?: PromptTemplate[]; // テンプレートプロンプトのリスト
+	defaultSummaryModel?: string; // ページ要約のデフォルトモデル
+	summarySaveFolder?: string; // ページ要約結果の保存先フォルダ
 }
 
