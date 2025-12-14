@@ -41,8 +41,16 @@ export class OpenRouterService implements AIService {
 			throw new Error("APIキーが設定されていません。設定画面でAPIキーを設定してください。");
 		}
 
+		// モデルを決定: options.modelが明示的に指定されている場合はそれを使用
+		// それ以外の場合は、this.settings.aiModelを使用（空の場合はデフォルト値）
+		const model = options.model !== undefined
+			? options.model
+			: (this.settings.aiModel && this.settings.aiModel.trim() !== ""
+				? this.settings.aiModel
+				: "google/gemini-2.5-flash");
+
 		const requestBody = {
-			model: options.model || this.settings.aiModel || "google/gemini-2.5-flash", // 設定のデフォルトモデルを使用
+			model: model, // 確実に設定されたモデルまたはデフォルト値を使用
 			messages: options.messages.map((msg) => ({
 				role: msg.role,
 				content: msg.content,

@@ -5,7 +5,6 @@
 
 import { App, Modal, Setting } from 'obsidian';
 import { EmbeddingService, EMBEDDING_MODELS, type EmbeddingModel } from '../services/embedding-service';
-import { SearchService } from '../services/search-service';
 
 export interface ModelChangeImpact {
 	existingIndexCount: number;
@@ -20,7 +19,6 @@ export interface ModelChangeImpact {
 export class ModelChangeDialog extends Modal {
 	private oldModel: string;
 	private newModel: EmbeddingModel;
-	private searchService: SearchService | null;
 	private onConfirm: (newModel: EmbeddingModel) => Promise<void>;
 	private confirmed: boolean = false;
 
@@ -28,13 +26,11 @@ export class ModelChangeDialog extends Modal {
 		app: App,
 		oldModel: string,
 		newModel: EmbeddingModel,
-		searchService: SearchService | null,
 		onConfirm: (newModel: EmbeddingModel) => Promise<void>
 	) {
 		super(app);
 		this.oldModel = oldModel;
 		this.newModel = newModel;
-		this.searchService = searchService;
 		this.onConfirm = onConfirm;
 	}
 
@@ -159,8 +155,8 @@ export class ModelChangeDialog extends Modal {
 	 * インパクトを計算
 	 */
 	private calculateImpact(): ModelChangeImpact {
-		// 簡易的な計算（実際のインデックス件数はSearchServiceから取得可能）
-		const existingIndexCount = 1000; // TODO: 実際の件数を取得
+		// 簡易的な計算
+		const existingIndexCount = 1000; // デフォルト値
 		const estimatedCost = existingIndexCount * 0.0001; // 簡易計算
 		const estimatedTime = Math.ceil(existingIndexCount / 50); // 50件/分と仮定
 

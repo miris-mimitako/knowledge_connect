@@ -7,7 +7,8 @@ import { Editor, MarkdownView } from "obsidian";
 import KnowledgeConnectPlugin from "../main";
 import { CHAT_VIEW_TYPE } from "../views/chat-view";
 import { SUMMARY_VIEW_TYPE } from "../views/summary-view";
-import { SEARCH_VIEW_TYPE } from "../views/search-view";
+import { URL_SUMMARY_VIEW_TYPE } from "../views/url-summary-view";
+import { RAG_VIEW_TYPE } from "../views/rag-view";
 import { showError } from "../utils/error-handler";
 
 export function registerCommands(plugin: KnowledgeConnectPlugin) {
@@ -51,21 +52,76 @@ export function registerCommands(plugin: KnowledgeConnectPlugin) {
 		},
 	});
 
-	// 検索Viewを開く
+	// URL要約Viewを開く
 	plugin.addCommand({
-		id: "open-search-view",
-		name: "AI検索を開く",
+		id: "open-url-summary-view",
+		name: "URL要約を開く",
 		callback: () => {
-			const existing = plugin.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
+			const existing = plugin.app.workspace.getLeavesOfType(URL_SUMMARY_VIEW_TYPE);
 			if (existing.length > 0) {
 				plugin.app.workspace.revealLeaf(existing[0]);
 			} else {
 				const leaf = plugin.app.workspace.getRightLeaf(false);
 				if (leaf) {
 					leaf.setViewState({
-						type: SEARCH_VIEW_TYPE,
+						type: URL_SUMMARY_VIEW_TYPE,
 						active: true,
 					});
+				}
+			}
+		},
+	});
+
+	// RAG Viewを開く
+	plugin.addCommand({
+		id: "open-rag-view",
+		name: "RAG Chatを開く",
+		callback: () => {
+			const existing = plugin.app.workspace.getLeavesOfType(RAG_VIEW_TYPE);
+			if (existing.length > 0) {
+				plugin.app.workspace.revealLeaf(existing[0]);
+			} else {
+				const leaf = plugin.app.workspace.getRightLeaf(false);
+				if (leaf) {
+					leaf.setViewState({
+						type: RAG_VIEW_TYPE,
+						active: true,
+					});
+				}
+			}
+		},
+	});
+
+	// RAGインデックスを更新
+	plugin.addCommand({
+		id: "update-rag-index",
+		name: "RAGインデックスを更新",
+		callback: async () => {
+			const existing = plugin.app.workspace.getLeavesOfType(RAG_VIEW_TYPE);
+			if (existing.length > 0) {
+				const ragView = existing[0].view;
+				if (ragView && "updateIndex" in ragView) {
+					await (ragView as any).updateIndex();
+				} else {
+					showError(
+						"RAG Viewが見つかりませんでした。先にRAG Chatを開いてください。",
+						plugin.settings.notificationSettings
+					);
+				}
+			} else {
+				// RAG Viewが開いていない場合は、開いてからインデックスを更新
+				const leaf = plugin.app.workspace.getRightLeaf(false);
+				if (leaf) {
+					await leaf.setViewState({
+						type: RAG_VIEW_TYPE,
+						active: true,
+					});
+					// Viewが開かれるまで少し待機
+					await new Promise(resolve => setTimeout(resolve, 500));
+					const ragView = leaf.view;
+					if (ragView && "updateIndex" in ragView) {
+						await (ragView as any).updateIndex();
+					}
 				}
 			}
 		},

@@ -12,7 +12,6 @@ const FILES_TO_COPY = [
 	"main.js",
 	"manifest.json",
 	"styles.css",
-	"search-worker.js", // Workerファイルもコピー
 ];
 
 console.log("プラグインファイルをObsidianにコピー中...");

@@ -130,8 +130,16 @@ export class LiteLLMService implements AIService {
 
 		const endpointUrl = this.getEndpointUrl();
 
+		// モデルを決定: options.modelが明示的に指定されている場合はそれを使用
+		// それ以外の場合は、this.settings.aiModelを使用（空の場合はデフォルト値）
+		const model = options.model !== undefined
+			? options.model
+			: (this.settings.aiModel && this.settings.aiModel.trim() !== ""
+				? this.settings.aiModel
+				: "gpt-3.5-turbo");
+
 		const requestBody = {
-			model: options.model || this.settings.aiModel || "gpt-3.5-turbo",
+			model: model, // 確実に設定されたモデルまたはデフォルト値を使用
 			messages: options.messages.map((msg) => ({
 				role: msg.role,
 				content: msg.content,
