@@ -5,6 +5,7 @@
 import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import KnowledgeConnectPlugin from "./main";
 import { LiteLLMService } from "./services/litellm-service";
+import { MCPService } from "./services/mcp-service";
 import { PromptTemplate } from "./types";
 
 
@@ -632,6 +633,604 @@ export class KnowledgeConnectSettingTab extends PluginSettingTab {
 					this.addNewPromptTemplate();
 				});
 		});
+
+		// ==================== MCPサーバー設定 ====================
+		containerEl.createEl("h3", { text: "MCPサーバー設定" });
+
+		// MCPサーバーの説明
+		containerEl.createEl("p", {
+			text: "MCPサーバーを使用して全文検索とベクトル検索を実行できます。サーバーが起動している必要があります。",
+			cls: "setting-item-description",
+		});
+
+		// MCPサーバーURL
+		new Setting(containerEl)
+			.setName("MCPサーバーURL")
+			.setDesc("MCPサーバーのベースURLを設定します。デフォルトは http://127.0.0.1:8000 です。")
+			.addText((text) => {
+				text
+					.setPlaceholder("http://127.0.0.1:8000")
+					.setValue(this.plugin.settings.mcpServerUrl || "http://127.0.0.1:8000")
+					.onChange(async (value) => {
+						// URLのバリデーション
+						try {
+							if (value && value.trim() !== "") {
+								new URL(value.trim());
+								this.plugin.settings.mcpServerUrl = value.trim();
+							} else {
+								this.plugin.settings.mcpServerUrl = "http://127.0.0.1:8000";
+							}
+							await this.plugin.saveSettings();
+						} catch {
+							new Notice("無効なURL形式です。");
+						}
+					});
+			});
+
+		// MCPサーバーの接続確認
+		const mcpStatusSetting = new Setting(containerEl)
+			.setName("MCPサーバーステータス")
+			.setDesc("MCPサーバーへの接続状態を確認します。")
+			.addButton((button) => {
+				button.setButtonText("接続確認").onClick(async () => {
+					button.setDisabled(true);
+					button.setButtonText("確認中...");
+					try {
+						const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+						const mcpService = new MCPService(baseUrl);
+						const health = await mcpService.checkHealth();
+						if (health.healthy) {
+							new Notice("MCPサーバーに接続できました");
+							mcpStatusSetting.setDesc(`ステータス: ${health.status}`);
+						} else {
+							new Notice("MCPサーバーに接続できませんでした。サーバーが起動しているか確認してください。");
+							mcpStatusSetting.setDesc(`ステータス: ${health.status}`);
+						}
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : "不明なエラー";
+						new Notice(`MCPサーバーへの接続に失敗しました: ${errorMessage}`);
+						console.error("MCPサーバー接続エラー:", error);
+						mcpStatusSetting.setDesc(`エラー: ${errorMessage}`);
+					} finally {
+						button.setDisabled(false);
+						button.setButtonText("接続確認");
+					}
+				});
+			});
+
+		// インデックス化用ディレクトリ
+		const indexDirectorySetting = new Setting(containerEl)
+			.setName("インデックス化対象ディレクトリ")
+			.setDesc("全文検索インデックスを作成するディレクトリを指定します。空欄の場合はVaultルートが使用されます。")
+			.addText((text) => {
+				text
+					.setPlaceholder(this.app.vault.adapter.basePath)
+					.setValue("")
+					.onChange(async (value) => {
+						// 設定として保存する必要はない（実行時に使用）
+					});
+			})
+			.addButton((button) => {
+				button.setButtonText("インデックス作成").setCta().onClick(async () => {
+					const directoryPath = (indexDirectorySetting.components[0] as any).getValue() || this.app.vault.adapter.basePath;
+					
+					button.setDisabled(true);
+					button.setButtonText("作成中...");
+					
+					try {
+						const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+						const mcpService = new MCPService(baseUrl);
+						
+						// サーバー接続確認
+						const isAvailable = await mcpService.isServerAvailable();
+						if (!isAvailable) {
+							throw new Error("MCPサーバーに接続できません。サーバーが起動しているか確認してください。");
+						}
+
+						// インデックス作成を開始
+						const result = await mcpService.createIndex(directoryPath, false);
+						new Notice(`インデックス作成を開始しました（ジョブID: ${result.job_id}）`);
+						
+						// 進捗を監視（非同期で実行）
+						this.monitorIndexJob(result.job_id, button);
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+						new Notice(`インデックス作成に失敗しました: ${errorMessage}`);
+						console.error("インデックス作成エラー:", error);
+						button.setDisabled(false);
+						button.setButtonText("インデックス作成");
+					}
+				});
+			});
+
+		// ベクトル化用ディレクトリ
+		const vectorizeDirectorySetting = new Setting(containerEl)
+			.setName("ベクトル化対象ディレクトリ")
+			.setDesc("ベクトル検索用にベクトル化するディレクトリを指定します。空欄の場合はVaultルートが使用されます。")
+			.addText((text) => {
+				text
+					.setPlaceholder(this.app.vault.adapter.basePath)
+					.setValue("")
+					.onChange(async (value) => {
+						// 設定として保存する必要はない（実行時に使用）
+					});
+			})
+			.addButton((button) => {
+				button.setButtonText("ベクトル化").setCta().onClick(async () => {
+					const directoryPath = (vectorizeDirectorySetting.components[0] as any).getValue() || this.app.vault.adapter.basePath;
+					
+					button.setDisabled(true);
+					button.setButtonText("ベクトル化中...");
+					
+					try {
+						const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+						const mcpService = new MCPService(baseUrl);
+						
+						// サーバー接続確認
+						const isAvailable = await mcpService.isServerAvailable();
+						if (!isAvailable) {
+							throw new Error("MCPサーバーに接続できません。サーバーが起動しているか確認してください。");
+						}
+
+						// Embeddingプロバイダーを取得（設定から）
+						const provider = this.plugin.settings.mcpVectorizeProvider || 
+							(this.plugin.settings.aiService === "openrouter" ? "openrouter" : undefined);
+						const model = this.plugin.settings.mcpVectorizeModel;
+						const apiBase = this.plugin.settings.mcpVectorizeApiBase;
+						const chunkSize = this.plugin.settings.mcpChunkSize || 512;
+						const chunkOverlap = this.plugin.settings.mcpChunkOverlap || 50;
+
+						// ベクトル化を開始
+						const result = await mcpService.vectorizeDirectory(
+							directoryPath, 
+							provider, 
+							model, 
+							apiBase, 
+							chunkSize, 
+							chunkOverlap
+						);
+						new Notice(`ベクトル化を開始しました（ジョブID: ${result.job_id}）`);
+						
+						// 進捗を監視（非同期で実行）
+						this.monitorVectorizeJob(result.job_id, button);
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+						new Notice(`ベクトル化に失敗しました: ${errorMessage}`);
+						console.error("ベクトル化エラー:", error);
+						button.setDisabled(false);
+						button.setButtonText("ベクトル化");
+					}
+				});
+			});
+
+		// 統計情報表示
+		const statsSetting = new Setting(containerEl)
+			.setName("統計情報")
+			.setDesc("インデックスとベクトルストアの統計情報を表示します。")
+			.addButton((button) => {
+				button.setButtonText("統計情報を取得").onClick(async () => {
+					button.setDisabled(true);
+					button.setButtonText("取得中...");
+					
+					try {
+						const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+						const mcpService = new MCPService(baseUrl);
+						
+						// サーバー接続確認
+						const isAvailable = await mcpService.isServerAvailable();
+						if (!isAvailable) {
+							throw new Error("MCPサーバーに接続できません。");
+						}
+
+						// 統計情報を取得
+						const [searchStats, vectorizeStats] = await Promise.all([
+							mcpService.getSearchStats().catch(() => null),
+							mcpService.getVectorizeStats().catch(() => null),
+						]);
+
+						let message = "統計情報:\n\n";
+						if (searchStats) {
+							message += `全文検索インデックス:\n`;
+							message += `  ドキュメント数: ${searchStats.total_documents}\n`;
+							message += `  データベースパス: ${searchStats.database_path}\n\n`;
+						}
+						if (vectorizeStats) {
+							message += `ベクトルストア:\n`;
+							message += `  チャンク数: ${vectorizeStats.total_chunks}\n`;
+							message += `  コレクション名: ${vectorizeStats.collection_name}\n`;
+							message += `  永続化ディレクトリ: ${vectorizeStats.persist_directory}\n`;
+						}
+
+						new Notice(message);
+						statsSetting.setDesc(message.replace(/\n/g, " "));
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+						new Notice(`統計情報の取得に失敗しました: ${errorMessage}`);
+						console.error("統計情報取得エラー:", error);
+					} finally {
+						button.setDisabled(false);
+						button.setButtonText("統計情報を取得");
+					}
+				});
+			});
+
+		// ==================== MCP APIパラメータ設定 ====================
+		containerEl.createEl("h3", { text: "MCP APIパラメータ設定" });
+
+		// ベクトル化設定
+		containerEl.createEl("h4", { text: "ベクトル化設定" });
+
+		// Embeddingプロバイダー
+		new Setting(containerEl)
+			.setName("Embeddingプロバイダー")
+			.setDesc("ベクトル化で使用するEmbeddingプロバイダーを選択してください。未設定の場合はAIサービス設定から推論されます。")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("", "未設定（AIサービス設定から推論）")
+					.addOption("openrouter", "OpenRouter")
+					.addOption("aws_bedrock", "AWS Bedrock")
+					.addOption("litellm", "LiteLLM")
+					.setValue(this.plugin.settings.mcpVectorizeProvider || "")
+					.onChange(async (value) => {
+						this.plugin.settings.mcpVectorizeProvider = value || undefined;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// Embeddingモデル
+		new Setting(containerEl)
+			.setName("Embeddingモデル")
+			.setDesc("ベクトル化で使用するモデル名を入力してください（例: text-embedding-ada-002, gemini/text-embedding-004）。未設定の場合はデフォルトモデルが使用されます。")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: text-embedding-ada-002")
+					.setValue(this.plugin.settings.mcpVectorizeModel || "")
+					.onChange(async (value) => {
+						this.plugin.settings.mcpVectorizeModel = value || undefined;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// LiteLLM API Base（ベクトル化用）
+		new Setting(containerEl)
+			.setName("LiteLLM API Base（ベクトル化用）")
+			.setDesc("LiteLLMプロバイダーを使用する場合のカスタムエンドポイントURLを設定します。")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: http://localhost:4000")
+					.setValue(this.plugin.settings.mcpVectorizeApiBase || "")
+					.onChange(async (value) => {
+						if (value && value.trim() !== "") {
+							try {
+								new URL(value.trim());
+								this.plugin.settings.mcpVectorizeApiBase = value.trim();
+							} catch {
+								new Notice("無効なURL形式です。");
+								return;
+							}
+						} else {
+							this.plugin.settings.mcpVectorizeApiBase = undefined;
+						}
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// チャンクサイズ
+		new Setting(containerEl)
+			.setName("チャンクサイズ")
+			.setDesc("ベクトル化時のチャンクサイズ（トークン数）を設定します。デフォルト: 512")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("512")
+					.setValue((this.plugin.settings.mcpChunkSize || 512).toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value);
+						if (!isNaN(numValue) && numValue > 0) {
+							this.plugin.settings.mcpChunkSize = numValue;
+							await this.plugin.saveSettings();
+						}
+					});
+			});
+
+		// チャンクオーバーラップ
+		new Setting(containerEl)
+			.setName("チャンクオーバーラップ")
+			.setDesc("ベクトル化時のオーバーラップサイズ（トークン数）を設定します。デフォルト: 50")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("50")
+					.setValue((this.plugin.settings.mcpChunkOverlap || 50).toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value);
+						if (!isNaN(numValue) && numValue >= 0) {
+							this.plugin.settings.mcpChunkOverlap = numValue;
+							await this.plugin.saveSettings();
+						}
+					});
+			});
+
+		// 検索設定
+		containerEl.createEl("h4", { text: "検索設定" });
+
+		// 検索結果の最大数
+		new Setting(containerEl)
+			.setName("検索結果の最大数")
+			.setDesc("検索結果の最大取得数を設定します。デフォルト: 20（1-100）")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("20")
+					.setValue((this.plugin.settings.mcpSearchLimit || 20).toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value);
+						if (!isNaN(numValue) && numValue >= 1 && numValue <= 100) {
+							this.plugin.settings.mcpSearchLimit = numValue;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("値は1から100の範囲で入力してください。");
+						}
+					});
+			});
+
+		// ハイブリッド検索の重み
+		new Setting(containerEl)
+			.setName("ハイブリッド検索の重み")
+			.setDesc("ベクトル検索の重みを設定します。0.0=全文検索のみ、0.5=等価、1.0=ベクトル検索のみ。デフォルト: 0.5")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text.inputEl.step = "0.1";
+				text
+					.setPlaceholder("0.5")
+					.setValue((this.plugin.settings.mcpHybridWeight || 0.5).toString())
+					.onChange(async (value) => {
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue) && numValue >= 0.0 && numValue <= 1.0) {
+							this.plugin.settings.mcpHybridWeight = numValue;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("値は0.0から1.0の範囲で入力してください。");
+						}
+					});
+			});
+
+		// キーワード検索の取得件数
+		new Setting(containerEl)
+			.setName("キーワード検索の取得件数")
+			.setDesc("各キーワードあたりの全文検索取得件数を設定します。デフォルト: 10（1-50）")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("10")
+					.setValue((this.plugin.settings.mcpKeywordLimit || 10).toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value);
+						if (!isNaN(numValue) && numValue >= 1 && numValue <= 50) {
+							this.plugin.settings.mcpKeywordLimit = numValue;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("値は1から50の範囲で入力してください。");
+						}
+					});
+			});
+
+		// ベクトル検索の取得件数
+		new Setting(containerEl)
+			.setName("ベクトル検索の取得件数")
+			.setDesc("ベクトル検索の取得件数を設定します。デフォルト: 20（1-100）")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("20")
+					.setValue((this.plugin.settings.mcpVectorLimit || 20).toString())
+					.onChange(async (value) => {
+						const numValue = parseInt(value);
+						if (!isNaN(numValue) && numValue >= 1 && numValue <= 100) {
+							this.plugin.settings.mcpVectorLimit = numValue;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("値は1から100の範囲で入力してください。");
+						}
+					});
+			});
+
+		// 類義語展開
+		new Setting(containerEl)
+			.setName("類義語展開を使用")
+			.setDesc("検索時に類義語展開を使用するかどうかを設定します。")
+			.addToggle((toggle) => {
+				toggle.setValue(this.plugin.settings.mcpExpandSynonyms || false).onChange(async (value) => {
+					this.plugin.settings.mcpExpandSynonyms = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		// RAG設定
+		containerEl.createEl("h4", { text: "RAG設定" });
+
+		// RAG用LLMプロバイダー
+		new Setting(containerEl)
+			.setName("RAG用LLMプロバイダー")
+			.setDesc("RAG回答生成で使用するLLMプロバイダーを選択してください。未設定の場合はAIサービス設定から推論されます。")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("", "未設定（AIサービス設定から推論）")
+					.addOption("openrouter", "OpenRouter")
+					.addOption("litellm", "LiteLLM")
+					.setValue(this.plugin.settings.mcpRagLLMProvider || "")
+					.onChange(async (value) => {
+						this.plugin.settings.mcpRagLLMProvider = value || undefined;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// RAG用LLMモデル
+		new Setting(containerEl)
+			.setName("RAG用LLMモデル")
+			.setDesc("RAG回答生成で使用するLLMモデル名を入力してください。未設定の場合はデフォルトモデルが使用されます。")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: google/gemini-3-flash-preview")
+					.setValue(this.plugin.settings.mcpRagModel || "")
+					.onChange(async (value) => {
+						this.plugin.settings.mcpRagModel = value || undefined;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// LiteLLM API Base（RAG用）
+		new Setting(containerEl)
+			.setName("LiteLLM API Base（RAG用）")
+			.setDesc("RAG用LiteLLMプロバイダーを使用する場合のカスタムエンドポイントURLを設定します。")
+			.addText((text) => {
+				text
+					.setPlaceholder("例: http://localhost:4000")
+					.setValue(this.plugin.settings.mcpRagApiBase || "")
+					.onChange(async (value) => {
+						if (value && value.trim() !== "") {
+							try {
+								new URL(value.trim());
+								this.plugin.settings.mcpRagApiBase = value.trim();
+							} catch {
+								new Notice("無効なURL形式です。");
+								return;
+							}
+						} else {
+							this.plugin.settings.mcpRagApiBase = undefined;
+						}
+						await this.plugin.saveSettings();
+					});
+			});
+
+		// RAG用温度パラメータ
+		new Setting(containerEl)
+			.setName("RAG用温度パラメータ")
+			.setDesc("RAG回答生成時の温度パラメータを設定します。デフォルト: 0.7（0.0-2.0）")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text.inputEl.step = "0.1";
+				text
+					.setPlaceholder("0.7")
+					.setValue((this.plugin.settings.mcpRagTemperature || 0.7).toString())
+					.onChange(async (value) => {
+						const numValue = parseFloat(value);
+						if (!isNaN(numValue) && numValue >= 0.0 && numValue <= 2.0) {
+							this.plugin.settings.mcpRagTemperature = numValue;
+							await this.plugin.saveSettings();
+						} else {
+							new Notice("値は0.0から2.0の範囲で入力してください。");
+						}
+					});
+			});
+
+		// RAG用最大トークン数
+		new Setting(containerEl)
+			.setName("RAG用最大トークン数")
+			.setDesc("RAG回答生成時の最大トークン数を設定します。未設定の場合は制限なしです。")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text
+					.setPlaceholder("未設定（制限なし）")
+					.setValue(this.plugin.settings.mcpRagMaxTokens ? this.plugin.settings.mcpRagMaxTokens.toString() : "")
+					.onChange(async (value) => {
+						if (value && value.trim() !== "") {
+							const numValue = parseInt(value);
+							if (!isNaN(numValue) && numValue > 0) {
+								this.plugin.settings.mcpRagMaxTokens = numValue;
+							} else {
+								this.plugin.settings.mcpRagMaxTokens = undefined;
+							}
+						} else {
+							this.plugin.settings.mcpRagMaxTokens = undefined;
+						}
+						await this.plugin.saveSettings();
+					});
+			});
+	}
+
+	/**
+	 * インデックス作成ジョブの進捗を監視
+	 */
+	private async monitorIndexJob(jobId: number, button: ReturnType<Setting["addButton"]>): Promise<void> {
+		const maxAttempts = 3600; // 最大1時間（2秒間隔）
+		let attempts = 0;
+
+		while (attempts < maxAttempts) {
+			try {
+				const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+				const mcpService = new MCPService(baseUrl);
+				const job = await mcpService.getJobStatus(jobId);
+				
+				if (job.status === 'completed') {
+					new Notice(`インデックス作成が完了しました（${job.progress.total}ファイル）`);
+					button.setDisabled(false);
+					button.setButtonText("インデックス作成");
+					return;
+				} else if (job.status === 'failed') {
+					throw new Error(job.error_message || 'インデックス作成が失敗しました');
+				} else if (job.status === 'cancelled') {
+					throw new Error('インデックス作成がキャンセルされました');
+				}
+
+				// 2秒待機
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				attempts++;
+			} catch (error) {
+				console.error("[Settings] ジョブ進捗確認エラー:", error);
+				const errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+				new Notice(`インデックス作成エラー: ${errorMessage}`);
+				button.setDisabled(false);
+				button.setButtonText("インデックス作成");
+				return;
+			}
+		}
+
+		new Notice("インデックス作成のタイムアウト");
+		button.setDisabled(false);
+		button.setButtonText("インデックス作成");
+	}
+
+	/**
+	 * ベクトル化ジョブの進捗を監視
+	 */
+	private async monitorVectorizeJob(jobId: number, button: ReturnType<Setting["addButton"]>): Promise<void> {
+		const maxAttempts = 3600; // 最大1時間（2秒間隔）
+		let attempts = 0;
+
+		while (attempts < maxAttempts) {
+			try {
+				const baseUrl = this.plugin.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+				const mcpService = new MCPService(baseUrl);
+				const job = await mcpService.getJobStatus(jobId);
+				
+				if (job.status === 'completed') {
+					new Notice(`ベクトル化が完了しました（${job.progress.total}ファイル）`);
+					button.setDisabled(false);
+					button.setButtonText("ベクトル化");
+					return;
+				} else if (job.status === 'failed') {
+					throw new Error(job.error_message || 'ベクトル化が失敗しました');
+				} else if (job.status === 'cancelled') {
+					throw new Error('ベクトル化がキャンセルされました');
+				}
+
+				// 2秒待機
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				attempts++;
+			} catch (error) {
+				console.error("[Settings] ジョブ進捗確認エラー:", error);
+				const errorMessage = error instanceof Error ? error.message : "不明なエラーが発生しました";
+				new Notice(`ベクトル化エラー: ${errorMessage}`);
+				button.setDisabled(false);
+				button.setButtonText("ベクトル化");
+				return;
+			}
+		}
+
+		new Notice("ベクトル化のタイムアウト");
+		button.setDisabled(false);
+		button.setButtonText("ベクトル化");
 	}
 
 	/**

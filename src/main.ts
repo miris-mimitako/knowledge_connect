@@ -13,12 +13,14 @@ import { ChatView, CHAT_VIEW_TYPE } from "./views/chat-view";
 import { SummaryView, SUMMARY_VIEW_TYPE } from "./views/summary-view";
 import { UrlSummaryView, URL_SUMMARY_VIEW_TYPE } from "./views/url-summary-view";
 import { RAGView, RAG_VIEW_TYPE } from "./views/rag-view";
+import { MCPSearchView, MCP_SEARCH_VIEW_TYPE } from "./views/mcp-search-view";
 import { registerCommands } from "./commands";
 import { registerContextMenu } from "./context-menu";
 import { registerEditorSummarizeButton } from "./utils/editor-summarize-button";
 import { registerEditorTagButton } from "./utils/editor-tag-button";
 import { AutoTagService } from "./services/auto-tag-service";
 import { FileWatcher } from "./services/file-watcher";
+import { MCPService } from "./services/mcp-service";
 import { TFile } from "obsidian";
 
 export default class KnowledgeConnectPlugin extends Plugin {
@@ -54,6 +56,10 @@ export default class KnowledgeConnectPlugin extends Plugin {
 				RAG_VIEW_TYPE,
 				(leaf) => new RAGView(leaf, this)
 			);
+			this.registerView(
+				MCP_SEARCH_VIEW_TYPE,
+				(leaf) => new MCPSearchView(leaf, this)
+			);
 
 			// コマンドを登録
 			registerCommands(this);
@@ -69,6 +75,9 @@ export default class KnowledgeConnectPlugin extends Plugin {
 
 			// エディタにタグ生成ボタンを追加
 			registerEditorTagButton(this);
+
+			// MCPサーバーへの接続確認（非同期、エラーが発生してもプラグインは起動を続行）
+			this.checkMCPServerConnection();
 
 			console.log("Knowledge Connect Plugin loaded");
 		} catch (error) {
@@ -192,6 +201,26 @@ export default class KnowledgeConnectPlugin extends Plugin {
 	 */
 	getAutoTagService(): AutoTagService | null {
 		return this.autoTagService;
+	}
+
+	/**
+	 * MCPサーバーへの接続確認
+	 * エラーが発生してもプラグインは正常に動作する
+	 */
+	private async checkMCPServerConnection(): Promise<void> {
+		try {
+			const baseUrl = this.settings.mcpServerUrl || 'http://127.0.0.1:8000';
+			const mcpService = new MCPService(baseUrl);
+			const health = await mcpService.checkHealth();
+			if (health.healthy) {
+				console.log(`[Knowledge Connect] MCPサーバーに接続しました: ${health.status}`);
+			} else {
+				console.log(`[Knowledge Connect] MCPサーバーに接続できません: ${health.status}`);
+			}
+		} catch (error) {
+			console.log("[Knowledge Connect] MCPサーバーが起動していない可能性があります");
+			console.error("[Knowledge Connect] MCPサーバー接続エラー:", error);
+		}
 	}
 }
 

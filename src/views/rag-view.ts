@@ -39,7 +39,7 @@ export class RAGView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, plugin: KnowledgeConnectPlugin) {
 		super(leaf);
 		this.plugin = plugin;
-		this.searchService = new RAGSearchService(plugin.app);
+		this.searchService = new RAGSearchService(plugin.app, plugin.settings);
 	}
 
 	getViewType(): string {
@@ -79,6 +79,10 @@ export class RAGView extends ItemView {
 		this.messagesEl.style.flex = "1";
 		this.messagesEl.style.overflowY = "auto";
 		this.messagesEl.style.padding = "1rem";
+		this.messagesEl.style.userSelect = "text";
+		this.messagesEl.style.webkitUserSelect = "text";
+		this.messagesEl.style.mozUserSelect = "text";
+		this.messagesEl.style.msUserSelect = "text";
 
 		// 入力エリア
 		const inputContainer = container.createDiv("rag-input-container");
@@ -223,7 +227,7 @@ export class RAGView extends ItemView {
 	/**
 	 * インデックスを更新（公開メソッド）
 	 */
-	async updateIndex(): Promise<void> {
+	async updateIndex(directoryPath?: string): Promise<void> {
 		if (this.indexButton) {
 			this.indexButton.disabled = true;
 			this.indexButton.textContent = "インデックス中...";
@@ -238,7 +242,7 @@ export class RAGView extends ItemView {
 				timestamp: new Date(),
 			});
 
-			await this.searchService.indexAllFiles();
+			await this.searchService.indexAllFiles(directoryPath);
 			
 			// インデックス数を確認
 			const indexedCount = await this.searchService.getIndexedCount();
@@ -310,22 +314,20 @@ export class RAGView extends ItemView {
 			// 3. 検索クエリを構築（単語をスペースで結合）
 			const searchQuery = expandedWords.join(" ");
 
-			// 4. 検索を実行（最大20件取得）
-			const allSearchHits = await this.searchService.search(searchQuery, 20);
+			// 4. 検索を実行（設定からパラメータを取得、ハイブリッド検索を使用）
+			const allSearchHits = await this.searchService.search(searchQuery);
 
-			// 5. スコア0.7以上の結果をフィルタリング
-			const searchHits = allSearchHits.filter((hit) => hit.score >= 0.7);
+			// 5. MCPサーバーのハイブリッド検索は既にスコアリング済みなので、そのまま使用
+			const searchHits = allSearchHits;
 
-			console.log(`[RAG View] 検索結果: 全${allSearchHits.length}件、スコア0.7以上: ${searchHits.length}件`);
+			console.log(`[RAG View] 検索結果: ${searchHits.length}件`);
 
 			// 検索結果を表示（デバッグ用）
 			if (searchHits.length > 0) {
 				this.addSearchResults(searchHits);
 			} else {
 				// 検索結果が0件の場合の警告
-				const warningMessage = allSearchHits.length > 0
-					? `⚠️ スコア0.7以上の検索結果が0件でした（全${allSearchHits.length}件中）。\n\nデバッグ情報:\n- 検索クエリ: "${searchQuery}"\n- 最大スコア: ${allSearchHits.length > 0 ? allSearchHits[0].score.toFixed(4) : "N/A"}`
-					: `⚠️ 検索結果が0件でした。インデックスが正しく作成されているか確認してください。\n\nデバッグ情報:\n- 検索クエリ: "${searchQuery}"\n- インデックス数を確認するには、開発者コンソールを開いてください。`;
+				const warningMessage = `⚠️ 検索結果が0件でした。インデックスが正しく作成されているか確認してください。\n\nデバッグ情報:\n- 検索クエリ: "${searchQuery}"\n- インデックス数を確認するには、設定画面の統計情報を確認してください。`;
 				
 				this.addMessage({
 					id: this.generateId(),
@@ -393,14 +395,16 @@ export class RAGView extends ItemView {
 		}
 
 		const contextParts = searchHits.map((hit, index) => {
+			// snippetがあればそれを使用、なければcontentを使用
+			const content = hit.snippet || hit.content;
 			// コンテンツを適切な長さに切り詰め（各ドキュメント最大2000文字）
-			const truncatedContent = hit.content.length > 2000
-				? hit.content.substring(0, 2000) + "..."
-				: hit.content;
+			const truncatedContent = content.length > 2000
+				? content.substring(0, 2000) + "..."
+				: content;
 
 			return `[参考情報 ${index + 1}]
 ファイルパス: ${hit.path}
-内容:
+${hit.location_info ? `位置情報: ${hit.location_info}\n` : ''}内容:
 ${truncatedContent}`;
 		});
 
@@ -422,6 +426,10 @@ ${truncatedContent}`;
 		resultsContainer.style.backgroundColor = "var(--background-secondary)";
 		resultsContainer.style.borderRadius = "4px";
 		resultsContainer.style.border = "1px solid var(--background-modifier-border)";
+		resultsContainer.style.userSelect = "text";
+		resultsContainer.style.webkitUserSelect = "text";
+		resultsContainer.style.mozUserSelect = "text";
+		resultsContainer.style.msUserSelect = "text";
 
 		const resultsTitle = resultsContainer.createEl("div", {
 			text: `検索結果: ${searchHits.length}件`,
@@ -431,6 +439,10 @@ ${truncatedContent}`;
 		resultsTitle.style.marginBottom = "0.5rem";
 		resultsTitle.style.fontSize = "0.9em";
 		resultsTitle.style.color = "var(--text-muted)";
+		resultsTitle.style.userSelect = "text";
+		resultsTitle.style.webkitUserSelect = "text";
+		resultsTitle.style.mozUserSelect = "text";
+		resultsTitle.style.msUserSelect = "text";
 
 		searchHits.forEach((hit, index) => {
 			const hitContainer = resultsContainer.createDiv("rag-search-hit");
@@ -438,6 +450,10 @@ ${truncatedContent}`;
 			hitContainer.style.padding = "0.5rem";
 			hitContainer.style.backgroundColor = "var(--background-primary)";
 			hitContainer.style.borderRadius = "2px";
+			hitContainer.style.userSelect = "text";
+			hitContainer.style.webkitUserSelect = "text";
+			hitContainer.style.mozUserSelect = "text";
+			hitContainer.style.msUserSelect = "text";
 
 			const pathEl = hitContainer.createEl("div", {
 				text: `${index + 1}. ${hit.path}`,
@@ -446,13 +462,26 @@ ${truncatedContent}`;
 			pathEl.style.fontSize = "0.85em";
 			pathEl.style.color = "var(--text-accent)";
 			pathEl.style.marginBottom = "0.25rem";
+			pathEl.style.userSelect = "text";
+			pathEl.style.webkitUserSelect = "text";
+			pathEl.style.mozUserSelect = "text";
+			pathEl.style.msUserSelect = "text";
 
-			const scoreEl = hitContainer.createEl("div", {
-				text: `スコア: ${hit.score.toFixed(4)}`,
-				cls: "rag-search-hit-score",
-			});
-			scoreEl.style.fontSize = "0.75em";
-			scoreEl.style.color = "var(--text-muted)";
+			// スニペットを表示（あれば）
+			if (hit.snippet) {
+				const snippetEl = hitContainer.createEl("div", {
+					text: hit.snippet.substring(0, 200) + (hit.snippet.length > 200 ? "..." : ""),
+					cls: "rag-search-hit-snippet",
+				});
+				snippetEl.style.fontSize = "0.8em";
+				snippetEl.style.color = "var(--text-normal)";
+				snippetEl.style.marginTop = "0.25rem";
+				snippetEl.style.fontStyle = "italic";
+				snippetEl.style.userSelect = "text";
+				snippetEl.style.webkitUserSelect = "text";
+				snippetEl.style.mozUserSelect = "text";
+				snippetEl.style.msUserSelect = "text";
+			}
 		});
 	}
 
@@ -477,6 +506,10 @@ ${truncatedContent}`;
 		messageContainer.style.marginBottom = "1rem";
 		messageContainer.style.padding = "0.75rem";
 		messageContainer.style.borderRadius = "4px";
+		messageContainer.style.userSelect = "text";
+		messageContainer.style.webkitUserSelect = "text";
+		messageContainer.style.mozUserSelect = "text";
+		messageContainer.style.msUserSelect = "text";
 
 		if (message.role === "user") {
 			messageContainer.style.backgroundColor = "var(--interactive-normal)";
@@ -515,6 +548,10 @@ ${truncatedContent}`;
 		const contentEl = messageContainer.createDiv("rag-message-content");
 		contentEl.style.whiteSpace = "pre-wrap";
 		contentEl.style.wordBreak = "break-word";
+		contentEl.style.userSelect = "text";
+		contentEl.style.webkitUserSelect = "text";
+		contentEl.style.mozUserSelect = "text";
+		contentEl.style.msUserSelect = "text";
 		contentEl.textContent = message.content;
 	}
 

@@ -1,76 +1,62 @@
 /**
  * RAG Search Service
- * Oramaを使用した全文検索ベースのRAG検索サービス
+ * MCPサーバーのハイブリッド検索を使用したRAG検索サービス
  */
 
-import { create, insert, search, type Orama, type SearchResult } from "@orama/orama";
-import { createTokenizer } from "@orama/tokenizers/japanese";
-import { App, TFile } from "obsidian";
+import { App } from "obsidian";
+import { MCPService, type SearchResult } from "./mcp-service";
+import type { KnowledgeConnectSettings } from "../types";
 
 /**
- * Oramaのスキーマ定義
- */
-interface DocumentSchema {
-	path: string;
-	content: string;
-}
-
-/**
- * 検索結果の型
+ * 検索結果の型（MCPサーバーのSearchResultと互換性を保つ）
  */
 export interface SearchHit {
 	path: string;
 	content: string;
 	score: number;
+	file_type?: string;
+	location_info?: string;
+	snippet?: string;
 }
 
 /**
  * RAG検索サービス
  */
 export class RAGSearchService {
-	private db: Orama<DocumentSchema> | null = null;
+	private mcpService: MCPService;
 	private app: App;
+	private settings: KnowledgeConnectSettings | undefined;
 	private isIndexing: boolean = false;
 	private indexProgress: { current: number; total: number } | null = null;
 	private indexedCount: number = 0; // インデックスされたドキュメント数を追跡
 
-	constructor(app: App) {
+	constructor(app: App, settings?: KnowledgeConnectSettings) {
 		this.app = app;
+		this.settings = settings;
+		const baseUrl = settings?.mcpServerUrl || 'http://127.0.0.1:8000';
+		this.mcpService = new MCPService(baseUrl);
 	}
 
 	/**
-	 * 検索データベースを初期化
+	 * 検索サービスを初期化（MCPサーバーの接続確認）
 	 */
 	async initialize(): Promise<void> {
-		if (this.db) {
-			return; // 既に初期化済み
-		}
-
 		try {
-			this.db = await create({
-				schema: {
-					path: "string",
-					content: "string",
-				},
-				components: {
-					tokenizer: createTokenizer(),
-				},
-			});
-			console.log("[RAG Search] データベースを初期化しました（日本語トークナイザー有効）");
+			const isAvailable = await this.mcpService.isServerAvailable();
+			if (!isAvailable) {
+				throw new Error("MCPサーバーに接続できません。サーバーが起動しているか確認してください。");
+			}
+			console.log("[RAG Search] MCPサーバーに接続しました");
 		} catch (error) {
-			console.error("[RAG Search] データベースの初期化に失敗しました:", error);
+			console.error("[RAG Search] MCPサーバーへの接続に失敗しました:", error);
 			throw error;
 		}
 	}
 
 	/**
-	 * Vault内の全Markdownファイルをインデックス
+	 * Vault内の全ファイルをインデックス（MCPサーバーを使用）
 	 */
-	async indexAllFiles(): Promise<void> {
-		if (!this.db) {
-			await this.initialize();
-		}
-
+	async indexAllFiles(directoryPath?: string): Promise<void> {
 		if (this.isIndexing) {
 			console.log("[RAG Search] インデックス処理は既に実行中です");
 			return;
@@ -80,57 +66,22 @@ export class RAGSearchService {
 		this.indexProgress = { current: 0, total: 0 };
 
 		try {
-			// 全Markdownファイルを取得
-			const markdownFiles = this.app.vault.getMarkdownFiles();
-			this.indexProgress.total = markdownFiles.length;
+			// ディレクトリパスが指定されていない場合は、Vaultのパスを使用
+			const targetPath = directoryPath || this.app.vault.adapter.basePath;
+			console.log(`[RAG Search] インデックス作成を開始: ${targetPath}`);
 
-			console.log(`[RAG Search] ${markdownFiles.length}個のファイルをインデックスします`);
+			// MCPサーバーにインデックス作成を依頼
+			const result = await this.mcpService.createIndex(targetPath, false);
+			console.log(`[RAG Search] インデックス作成ジョブ開始: ${result.job_id}`);
 
-			// 既存のデータをクリア（簡易的な方法として、新しいDBを作成）
-			if (this.db) {
-				this.db = await create({
-					schema: {
-						path: "string",
-						content: "string",
-					},
-					components: {
-						tokenizer: createTokenizer(),
-					},
-				});
-			}
+			// ジョブの進捗を監視
+			await this.monitorJobProgress(result.job_id);
 
-			// カウンターをリセット
-			this.indexedCount = 0;
+			// 統計情報を取得してインデックス数を更新
+			const stats = await this.mcpService.getSearchStats();
+			this.indexedCount = stats.total_documents;
 
-			// ファイルを順次インデックス
-			for (let i = 0; i < markdownFiles.length; i++) {
-				const file = markdownFiles[i];
-				try {
-					await this.indexFile(file);
-					this.indexedCount++;
-					this.indexProgress.current = i + 1;
-
-					// 進捗をログに出力（100ファイルごと）
-					if ((i + 1) % 100 === 0) {
-						console.log(`[RAG Search] インデックス進捗: ${i + 1}/${markdownFiles.length}`);
-					}
-
-					// UIをブロックしないように、適宜待機
-					if (i % 10 === 0) {
-						await new Promise((resolve) => setTimeout(resolve, 0));
-					}
-				} catch (error) {
-					console.error(`[RAG Search] ファイルのインデックスに失敗: ${file.path}`, error);
-					// エラーが発生しても処理を続行
-				}
-			}
-
-			console.log(`[RAG Search] インデックス完了: ${markdownFiles.length}個のファイル`);
-			console.log(`[RAG Search] 実際にインデックスされたドキュメント数: ${this.indexedCount}`);
-			
-			if (this.indexedCount === 0) {
-				console.warn("[RAG Search] 警告: インデックスされたドキュメントが0件です。");
-			}
+			console.log(`[RAG Search] インデックス完了: ${stats.total_documents}個のドキュメント`);
 		} catch (error) {
 			console.error("[RAG Search] インデックス処理中にエラーが発生しました:", error);
 			throw error;
@@ -141,68 +92,98 @@ export class RAGSearchService {
 	}
 
 	/**
-	 * 単一ファイルをインデックス
+	 * ジョブの進捗を監視
 	 */
-	private async indexFile(file: TFile): Promise<void> {
-		if (!this.db) {
-			throw new Error("データベースが初期化されていません");
+	private async monitorJobProgress(jobId: number): Promise<void> {
+		const maxAttempts = 3600; // 最大1時間（2秒間隔）
+		let attempts = 0;
+
+		while (attempts < maxAttempts) {
+			try {
+				const job = await this.mcpService.getJobStatus(jobId);
+				
+				if (job.status === 'completed') {
+					this.indexProgress = {
+						current: job.progress.total,
+						total: job.progress.total,
+					};
+					return;
+				} else if (job.status === 'failed') {
+					throw new Error(job.error_message || 'インデックス作成が失敗しました');
+				} else if (job.status === 'cancelled') {
+					throw new Error('インデックス作成がキャンセルされました');
+				} else if (job.status === 'processing') {
+					this.indexProgress = {
+						current: job.progress.current,
+						total: job.progress.total,
+					};
+				}
+
+				// 2秒待機
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				attempts++;
+			} catch (error) {
+				console.error("[RAG Search] ジョブ進捗確認エラー:", error);
+				throw error;
+			}
 		}
 
-		try {
-			// ファイルの内容を読み込み
-			const content = await this.app.vault.read(file);
-
-			// Oramaに挿入
-			await insert(this.db, {
-				path: file.path,
-				content: content,
-			});
-		} catch (error) {
-			console.error(`[RAG Search] ファイル読み込みエラー: ${file.path}`, error);
-			throw error;
-		}
+		throw new Error('インデックス作成のタイムアウト');
 	}
 
 	/**
-	 * 検索を実行
+	 * 検索を実行（MCPサーバーのハイブリッド検索を使用）
 	 * @param query 検索クエリ
 	 * @param limit 取得件数（デフォルト: 20）
+	 * @param hybridWeight ベクトル検索の重み（デフォルト: 0.5）
+	 * @param expandSynonyms 類義語展開を使用するか（デフォルト: false）
 	 * @returns 検索結果の配列
 	 */
-	async search(query: string, limit: number = 20): Promise<SearchHit[]> {
-		if (!this.db) {
-			await this.initialize();
-		}
-
-		if (!this.db) {
-			throw new Error("データベースが初期化されていません");
-		}
+	async search(
+		query: string,
+		limit?: number,
+		hybridWeight?: number,
+		expandSynonyms?: boolean
+	): Promise<SearchHit[]> {
+		await this.initialize();
 
 		try {
-			console.log(`[RAG Search] 検索クエリ: "${query}"`);
+			// 設定からパラメータを取得（未指定の場合は設定値を使用）
+			const searchLimit = limit ?? (this.settings?.mcpSearchLimit || 20);
+			const weight = hybridWeight ?? (this.settings?.mcpHybridWeight || 0.5);
+			const keywordLimit = this.settings?.mcpKeywordLimit || 10;
+			const vectorLimit = this.settings?.mcpVectorLimit || 20;
+			const expand = expandSynonyms ?? (this.settings?.mcpExpandSynonyms || false);
+
+			console.log(`[RAG Search] ハイブリッド検索クエリ: "${query}"`);
 			
-			// Oramaで検索を実行（contentプロパティを明示的に指定）
-			const results = await search(this.db, {
-				term: query,
-				properties: ["content"], // contentプロパティのみを検索対象に
-				limit: limit,
-			});
+			// MCPサーバーでハイブリッド検索を実行
+			const result = await this.mcpService.hybridSearch(
+				query,
+				searchLimit,
+				weight,
+				keywordLimit,
+				vectorLimit,
+				expand
+			);
 
-			console.log(`[RAG Search] 検索結果: ${results.hits.length}件`);
+			console.log(`[RAG Search] 検索結果: ${result.total}件`);
 
-			// 検索結果を整形
-			const hits: SearchHit[] = results.hits.map((hit) => ({
-				path: (hit.document as DocumentSchema).path,
-				content: (hit.document as DocumentSchema).content,
-				score: hit.score || 0,
+			// 検索結果を整形（MCPサーバーのSearchResultをSearchHitに変換）
+			const hits: SearchHit[] = result.results.map((r: SearchResult) => ({
+				path: r.file_path,
+				content: r.snippet || '',
+				score: 1.0, // MCPサーバーはスコアを返さないため、デフォルト値を設定
+				file_type: r.file_type,
+				location_info: r.location_info,
+				snippet: r.snippet,
 			}));
 
 			// デバッグ用: 検索結果の詳細をログに出力
 			if (hits.length > 0) {
 				console.log(`[RAG Search] 検索結果のサンプル:`, {
 					path: hits[0].path,
-					contentPreview: hits[0].content.substring(0, 100) + "...",
-					score: hits[0].score,
+					contentPreview: hits[0].snippet?.substring(0, 100) + "..." || "",
 				});
 			} else {
 				console.warn(`[RAG Search] 検索結果が0件です。インデックスが正しく作成されているか確認してください。`);
@@ -237,10 +218,14 @@ export class RAGSearchService {
 	}
 
 	/**
-	 * データベースが初期化されているか
+	 * データベースが初期化されているか（MCPサーバーが利用可能か）
 	 */
-	isInitialized(): boolean {
-		return this.db !== null;
+	async isInitialized(): Promise<boolean> {
+		try {
+			return await this.mcpService.isServerAvailable();
+		} catch {
+			return false;
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	maxTokens: 2000,
 	aiModel: "google/gemini-2.5-flash", // デフォルトモデル
 	litellmEndpointUrl: "http://localhost:4000", // LiteLLMデフォルトエンドポイント
+	mcpServerUrl: "http://127.0.0.1:8000", // MCPサーバーのデフォルトURL
 	
 	// ページ要約機能のデフォルト設定
 	promptTemplates: [
@@ -52,6 +53,23 @@ export const DEFAULT_SETTINGS: KnowledgeConnectSettings = {
 	] as PromptTemplate[],
 	defaultSummaryModel: "", // 空の場合はaiModelを使用
 	summarySaveFolder: "", // 空の場合は元のページと同じフォルダ
+
+	// MCP APIパラメータ設定（デフォルト値）
+	mcpVectorizeProvider: undefined, // ベクトル化のプロバイダー（未設定の場合はaiServiceから推論）
+	mcpVectorizeModel: undefined, // ベクトル化のモデル名
+	mcpVectorizeApiBase: undefined, // LiteLLMのカスタムエンドポイントURL
+	mcpChunkSize: 512, // チャンクサイズ
+	mcpChunkOverlap: 50, // オーバーラップサイズ
+	mcpSearchLimit: 20, // 検索結果の最大数
+	mcpHybridWeight: 0.5, // ベクトル検索の重み
+	mcpKeywordLimit: 10, // 全文検索取得件数
+	mcpVectorLimit: 20, // ベクトル検索取得件数
+	mcpExpandSynonyms: false, // 類義語展開を使用するか
+	mcpRagLLMProvider: undefined, // RAG用LLMプロバイダー（未設定の場合はaiServiceから推論）
+	mcpRagModel: undefined, // RAG用LLMモデル名
+	mcpRagApiBase: undefined, // RAG用LiteLLMのカスタムエンドポイントURL
+	mcpRagTemperature: 0.7, // RAG用温度パラメータ
+	mcpRagMaxTokens: undefined, // RAG用最大トークン数（未設定の場合はnull）
 };
 
 /**
