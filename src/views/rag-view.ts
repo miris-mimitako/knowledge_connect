@@ -6,6 +6,7 @@
 import { ItemView, MarkdownView, WorkspaceLeaf } from "obsidian";
 import KnowledgeConnectPlugin from "../main";
 import { RAGSearchService, type SearchHit } from "../services/rag-search-service";
+import { MCPService, type SearchResult } from "../services/mcp-service";
 import { showError, showInfo, showSuccess } from "../utils/error-handler";
 import { saveToFile } from "../utils/file-manager";
 import { SaveDialog } from "../utils/save-dialog";
@@ -27,6 +28,7 @@ interface RAGMessage {
 export class RAGView extends ItemView {
 	plugin: KnowledgeConnectPlugin;
 	private searchService: RAGSearchService;
+	private mcpService: MCPService;
 	private messages: RAGMessage[] = [];
 	private inputEl: HTMLTextAreaElement | null = null;
 	private messagesEl: HTMLElement | null = null;
@@ -40,6 +42,8 @@ export class RAGView extends ItemView {
 		super(leaf);
 		this.plugin = plugin;
 		this.searchService = new RAGSearchService(plugin.app, plugin.settings);
+		const baseUrl = plugin.settings?.mcpServerUrl || 'http://127.0.0.1:8000';
+		this.mcpService = new MCPService(baseUrl);
 	}
 
 	getViewType(): string {
@@ -303,71 +307,60 @@ export class RAGView extends ItemView {
 		this.setLoading(true);
 
 		try {
-			// 1. kuromojiで分かち書き
-			const words = this.tokenizeQuery(query);
-			console.log(`[RAG View] 分かち書き結果: ${words.join(", ")}`);
+			// MCPサーバーのRAGエンドポイントを使用して回答を取得
+			const settings = this.plugin.settings;
+			
+			// 設定からパラメータを取得
+			const limit = settings.mcpSearchLimit || 20;
+			const hybridWeight = settings.mcpHybridWeight || 0.5;
+			const keywordLimit = settings.mcpKeywordLimit || 10;
+			const vectorLimit = settings.mcpVectorLimit || 20;
+			const expandSynonyms = settings.mcpExpandSynonyms || false;
+			const llmProvider = settings.mcpRagLLMProvider;
+			const model = settings.mcpRagModel;
+			const apiBase = settings.mcpRagApiBase;
+			const temperature = settings.mcpRagTemperature || 0.7;
+			const maxTokens = settings.mcpRagMaxTokens;
 
-			// 2. AIで類似単語を抽出
-			const expandedWords = await this.extractSimilarWords(words);
-			console.log(`[RAG View] 類似単語抽出結果: ${expandedWords.join(", ")}`);
+			console.log(`[RAG View] RAGエンドポイントを呼び出し: "${query}"`);
 
-			// 3. 検索クエリを構築（単語をスペースで結合）
-			const searchQuery = expandedWords.join(" ");
+			// POST /search/rag エンドポイントを呼び出し
+			const ragResponse = await this.mcpService.ragQueryPost(
+				query,
+				llmProvider,
+				model,
+				apiBase,
+				limit,
+				hybridWeight,
+				keywordLimit,
+				vectorLimit,
+				expandSynonyms,
+				temperature,
+				maxTokens
+			);
 
-			// 4. 検索を実行（設定からパラメータを取得、ハイブリッド検索を使用）
-			const allSearchHits = await this.searchService.search(searchQuery);
+			console.log(`[RAG View] RAG回答を取得: モデル=${ragResponse.model_used}, プロバイダー=${ragResponse.provider_used}, ソース数=${ragResponse.sources.length}`);
 
-			// 5. MCPサーバーのハイブリッド検索は既にスコアリング済みなので、そのまま使用
-			const searchHits = allSearchHits;
-
-			console.log(`[RAG View] 検索結果: ${searchHits.length}件`);
+			// SearchResultをSearchHitに変換
+			const searchHits: SearchHit[] = ragResponse.sources.map((source: SearchResult) => ({
+				path: source.file_path,
+				content: source.snippet || '',
+				score: 1.0,
+				file_type: source.file_type,
+				location_info: source.location_info,
+				snippet: source.snippet,
+			}));
 
 			// 検索結果を表示（デバッグ用）
 			if (searchHits.length > 0) {
 				this.addSearchResults(searchHits);
-			} else {
-				// 検索結果が0件の場合の警告
-				const warningMessage = `⚠️ 検索結果が0件でした。インデックスが正しく作成されているか確認してください。\n\nデバッグ情報:\n- 検索クエリ: "${searchQuery}"\n- インデックス数を確認するには、設定画面の統計情報を確認してください。`;
-				
-				this.addMessage({
-					id: this.generateId(),
-					role: "assistant",
-					content: warningMessage,
-					timestamp: new Date(),
-				});
 			}
 
-			// AIサービスを取得
-			const aiService = this.plugin.getAIService();
-			if (!aiService) {
-				throw new Error("APIキーが設定されていません。設定画面でAPIキーを設定してください。");
-			}
-
-			// コンテキストを構築（検索結果が0件の場合は空のコンテキスト）
-			const context = searchHits.length > 0 ? this.buildContext(searchHits) : "参考情報: 該当するドキュメントが見つかりませんでした。";
-
-			// 5. LLMにリクエストを送信
-			const response = await aiService.chatCompletion({
-				messages: [
-					{
-						role: "system",
-						content: `あなたは優秀なアシスタントです。以下の参考情報を基に、ユーザーの質問に答えてください。
-参考情報は、ユーザーのVault内のドキュメントから検索されたものです。
-参考情報に基づいて回答し、参考情報にない内容については推測せずに「参考情報には記載がありません」と答えてください。`,
-					},
-					{
-						role: "user",
-						content: `${context}\n\n質問: ${query}`,
-					},
-				],
-				maxTokens: this.plugin.settings.maxTokens,
-			});
-
-			// 6. 回答を表示（検索結果も含める）
+			// 回答を表示（検索結果も含める）
 			this.addMessage({
 				id: this.generateId(),
 				role: "assistant",
-				content: response.content,
+				content: ragResponse.answer,
 				searchHits: searchHits,
 				timestamp: new Date(),
 			});
